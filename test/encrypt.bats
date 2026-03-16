@@ -44,7 +44,7 @@ load test_helper
 
   run "$REPO_DIR/.mise/tasks/encrypt/setup"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"already initialized"* ]]
+  [[ "$output" == *"git-crypt already initialized — updating auxiliary files..."* ]]
 }
 
 @test "setup with custom patterns writes them to .gitattributes" {
