@@ -14,18 +14,13 @@ if ! command -v git-crypt &>/dev/null; then
   mise -C "$REPO_DIR" run -q encrypt:install
 fi
 
-# --- Already initialized? ---
-# Check both .git-crypt/ (committed keys) and .git/git-crypt (local init state)
+# --- Initialize (skip if already done) ---
 if is_initialized || [ -d "$TARGET_DIR/.git/git-crypt" ]; then
-  echo "git-crypt already initialized in this repo."
-  echo "To add a collaborator: notes encrypt:add-user --gpg-key <fingerprint>"
-  echo "To check status:       notes encrypt:status"
-  exit 0
+  echo "git-crypt already initialized — updating auxiliary files..."
+else
+  echo "Initializing git-crypt..."
+  git -C "$TARGET_DIR" crypt init
 fi
-
-# --- Initialize ---
-echo "Initializing git-crypt..."
-git -C "$TARGET_DIR" crypt init
 
 # --- Add GPG keys ---
 if [ -n "${usage_gpg_key:-}" ]; then
