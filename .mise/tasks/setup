@@ -60,7 +60,10 @@ gitattributes_has_encrypted_pattern() {
 }
 
 if [ -n "${usage_pattern:-}" ]; then
-  IFS=$'\n' read -r -d '' -a patterns <<< "$usage_pattern" || true
+  patterns=()
+  while IFS= read -r pattern; do
+    patterns+=("$pattern")
+  done < <(printf '%s' "$usage_pattern" | xargs printf '%s\n')
 else
   patterns=("notes/**")
 fi
