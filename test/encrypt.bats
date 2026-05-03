@@ -58,6 +58,17 @@ load test_helper
   grep -q "git-crypt" "$TARGET_DIR/.gitattributes"
 }
 
+@test "setup treats disabled filter attribute as missing encrypted pattern" {
+  git -C "$TARGET_DIR" crypt init
+  echo "notes/** -filter=git-crypt diff=git-crypt" > "$TARGET_DIR/.gitattributes"
+
+  run notes setup
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Configuring encrypted patterns"* ]]
+
+  grep -q "notes/\*\*.*filter=git-crypt" "$TARGET_DIR/.gitattributes"
+}
+
 @test "setup with custom patterns writes them to .gitattributes" {
   run notes setup -- --pattern "agents/*/Zettels/**" --pattern "notes/private/**"
   [ "$status" -eq 0 ]

@@ -54,7 +54,11 @@ GITATTRIBUTES="$TARGET_DIR/.gitattributes"
 gitattributes_has_encrypted_pattern() {
   local pattern="$1"
   awk -v pattern="$pattern" '
-    $1 == pattern && /filter=git-crypt/ { found = 1 }
+    $1 == pattern {
+      for (i = 2; i <= NF; i++) {
+        if ($i == "filter=git-crypt") found = 1
+      }
+    }
     END { exit(found ? 0 : 1) }
   ' "$GITATTRIBUTES" 2>/dev/null
 }
