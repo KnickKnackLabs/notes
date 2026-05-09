@@ -9,94 +9,108 @@ set -eo pipefail
 TARGET_DIR="${CALLER_PWD:-.}"
 notes_dir="$TARGET_DIR/${usage_dir:-notes}"
 
-if ! command -v farts &>/dev/null; then
-  echo "Error: farts not found. Install it: shiv install farts" >&2
-  exit 1
-fi
-
 if [ ! -d "$notes_dir" ]; then
   echo "Error: notes directory not found: $notes_dir" >&2
   exit 1
 fi
 
-# Collect candidate files (frontmatter check filters out non-notes)
-files=()
-for f in "$notes_dir"/*.md; do
-  [ ! -f "$f" ] && continue
-  files+=("$f")
-done
+python3 - "$notes_dir" "${usage_json:-false}" "${usage_recent:-}" "${usage_tag:-}" <<'PY'
+import json
+import sys
+from pathlib import Path
 
-if [ ${#files[@]} -eq 0 ]; then
-  if [ "${usage_json:-}" = "true" ]; then
-    echo "[]"
-  else
-    echo "No notes found."
-  fi
-  exit 0
-fi
+notes_dir = Path(sys.argv[1])
+json_output = sys.argv[2] == "true"
+recent = sys.argv[3]
+tag_filter = sys.argv[4]
 
-# Filter by tag using farts query
-if [ -n "${usage_tag:-}" ]; then
-  filtered=()
-  while IFS= read -r match; do
-    [ -n "$match" ] && filtered+=("$match")
-  done < <(farts query "tags contains $usage_tag" "${files[@]}" 2>/dev/null || true)
-  files=("${filtered[@]}")
 
-  if [ ${#files[@]} -eq 0 ]; then
-    if [ "${usage_json:-}" = "true" ]; then
-      echo "[]"
-    else
-      echo "No notes found with tag: $usage_tag"
-    fi
-    exit 0
-  fi
-fi
+def parse_scalar(value: str) -> str:
+    value = value.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+        return value[1:-1]
+    return value
 
-# Extract metadata from each file
-rows=()
-for f in "${files[@]}"; do
-  title=$(farts get title "$f" 2>/dev/null || true)
-  [ -z "$title" ] && continue
-  updated=$(farts get updated "$f" 2>/dev/null || true)
-  created=$(farts get created "$f" 2>/dev/null || true)
-  tags=$(farts get tags "$f" 2>/dev/null | paste -sd ',' - || true)
-  date="${updated:-$created}"
-  slug=$(basename "$f" .md)
-  rows+=("$(printf '%s\t%s\t%s\t%s\t%s' "$title" "$tags" "$date" "$slug" "$f")")
-done
 
-# Sort by date descending
-sorted=$(printf '%s\n' "${rows[@]}" | sort -t$'\t' -k3 -r)
+def parse_list(value: str):
+    value = value.strip()
+    if not value:
+        return []
+    if value.startswith("[") and value.endswith("]"):
+        inner = value[1:-1].strip()
+        if not inner:
+            return []
+        return [parse_scalar(part) for part in inner.split(",") if parse_scalar(part)]
+    return [parse_scalar(value)]
 
-# Apply --recent limit
-if [ -n "${usage_recent:-}" ]; then
-  sorted=$(echo "$sorted" | head -n "$usage_recent")
-fi
 
-# Output
-if [ "${usage_json:-}" = "true" ]; then
-  echo "$sorted" | awk -F'\t' 'BEGIN { print "[" }
-    NR > 1 { printf "," }
-    {
-      # Escape JSON-special characters
-      gsub(/\\/, "\\\\", $1); gsub(/"/, "\\\"", $1)
-      gsub(/\\/, "\\\\", $2); gsub(/"/, "\\\"", $2)
-      # Split tags into array
-      n = split($2, tags, ",")
-      tag_json = "["
-      for (i = 1; i <= n; i++) {
-        if (i > 1) tag_json = tag_json ","
-        gsub(/^ +| +$/, "", tags[i])
-        tag_json = tag_json "\"" tags[i] "\""
-      }
-      tag_json = tag_json "]"
-      printf "\n  {\"title\": \"%s\", \"tags\": %s, \"date\": \"%s\", \"slug\": \"%s\", \"path\": \"%s\"}", $1, tag_json, $3, $4, $5
-    }
-    END { print "\n]" }'
-else
-  {
-    printf 'Title\tTags\tUpdated\n'
-    echo "$sorted" | awk -F'\t' '{ printf "%s\t%s\t%s\n", $1, $2, $3 }'
-  } | gum table --print --separator "	"
-fi
+def parse_frontmatter(path: Path):
+    try:
+        text = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        return None
+    if not text.startswith("---\n"):
+        return None
+    end = text.find("\n---", 4)
+    if end == -1:
+        return None
+
+    data: dict[str, object] = {}
+    for line in text[4:end].splitlines():
+        if not line.strip() or line.lstrip().startswith("#") or ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        key = key.strip()
+        value = value.strip()
+        if key in {"tags", "related"}:
+            data[key] = parse_list(value)
+        else:
+            data[key] = parse_scalar(value)
+    return data
+
+
+rows = []
+for path in sorted(notes_dir.glob("*.md")):
+    meta = parse_frontmatter(path)
+    if not meta:
+        continue
+    title = str(meta.get("title", "")).strip()
+    if not title:
+        continue
+    tags = meta.get("tags", [])
+    if not isinstance(tags, list):
+        tags = []
+    if tag_filter and tag_filter not in tags:
+        continue
+    date = str(meta.get("updated") or meta.get("created") or "")
+    rows.append({
+        "title": title,
+        "tags": tags,
+        "date": date,
+        "slug": path.stem,
+        "path": str(path),
+    })
+
+rows.sort(key=lambda row: row["date"], reverse=True)
+if recent:
+    rows = rows[: int(recent)]
+
+if json_output:
+    print(json.dumps(rows, indent=2, ensure_ascii=False))
+elif not rows:
+    if tag_filter:
+        print(f"No notes found with tag: {tag_filter}")
+    else:
+        print("No notes found.")
+else:
+    table = "Title\tTags\tUpdated\n" + "\n".join(
+        f"{row['title']}\t{', '.join(row['tags'])}\t{row['date']}" for row in rows
+    )
+    import subprocess
+    subprocess.run(
+        ["gum", "table", "--print", "--separator", "\t"],
+        input=table,
+        text=True,
+        check=True,
+    )
+PY

@@ -8,6 +8,7 @@ REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 if [ $# -gt 0 ]; then
   exec bats "$@"
-else
-  exec bats "$REPO_DIR/test/"
 fi
+
+jobs="${NOTES_TEST_JOBS:-8}"
+exec bats --jobs "$jobs" --parallel-binary-name rush "$REPO_DIR/test/"

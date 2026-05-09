@@ -14,11 +14,6 @@ TARGET_DIR="${CALLER_PWD:-.}"
 notes_dir="$TARGET_DIR/${usage_dir:-notes}"
 today=$(date +%Y-%m-%d)
 
-if ! command -v farts &>/dev/null; then
-  echo "Error: farts not found. Install it: shiv install farts" >&2
-  exit 1
-fi
-
 if [ ! -d "$notes_dir" ]; then
   echo "Error: notes directory not found: $notes_dir" >&2
   exit 1
@@ -35,19 +30,20 @@ related="${usage_related:-}"
 created="${usage_created:-$today}"
 updated="${usage_updated:-$today}"
 
-# Create the file and initialize frontmatter via farts
-echo "# $usage_title" > "$file"
-farts init "$file" \
-  "title=$usage_title" \
-  "tags=[$tags]" \
-  "related=[$related]" \
-  "created=$created" \
-  "updated=$updated"
-
-# Append body if provided
-if [ -n "${usage_body:-}" ]; then
-  echo "" >> "$file"
-  echo "$usage_body" >> "$file"
-fi
+{
+  echo "---"
+  echo "title: $usage_title"
+  echo "tags: [$tags]"
+  echo "related: [$related]"
+  echo "created: $created"
+  echo "updated: $updated"
+  echo "---"
+  echo ""
+  echo "# $usage_title"
+  if [ -n "${usage_body:-}" ]; then
+    echo ""
+    echo "$usage_body"
+  fi
+} > "$file"
 
 echo "  Created $file"
