@@ -263,19 +263,30 @@ setup() {
   [[ "$output" == *"alpha.md"* ]]
 }
 
-@test "notes stage: no args skips new notes but stages modified notes" {
+@test "notes stage: bare invocation errors with usage hint" {
+  # Per KKL/notes#45.
   echo "# Alpha modified" > "$CALLER_PWD/notes/alpha.md"
   echo "# Gamma" > "$CALLER_PWD/notes/gamma.md"
 
   run notes stage
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"requires explicit file argument"* ]]
+  [[ "$output" == *"notes stage <file>"* ]]
+
+  # No side effect: index must remain empty.
+  run git -C "$CALLER_PWD" diff --cached --name-only
+  [ -z "$output" ]
+}
+
+@test "notes stage: explicit file stages a modified note" {
+  echo "# Alpha modified" > "$CALLER_PWD/notes/alpha.md"
+
+  run notes stage alpha.md
   [ "$status" -eq 0 ]
   [[ "$output" == *"staged: alpha.md"* ]]
-  [[ "$output" == *"Skipped 1 new note(s)"* ]]
-  [[ "$output" == *"new: gamma.md"* ]]
 
   run git -C "$CALLER_PWD" diff --cached --name-only
   [[ "$output" == *"notes/alpha.md"* ]]
-  [[ "$output" != *"notes/gamma.md"* ]]
 }
 
 @test "notes stage: explicit file stages a new note" {
@@ -289,7 +300,37 @@ setup() {
   [[ "$output" == *"notes/gamma.md"* ]]
 }
 
-@test "notes stage: no args skips readable files left from another branch" {
+@test "notes stage: multiple explicit files stage in one call" {
+  echo "# Alpha modified" > "$CALLER_PWD/notes/alpha.md"
+  echo "# Gamma" > "$CALLER_PWD/notes/gamma.md"
+
+  run notes stage alpha.md gamma.md
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"staged: alpha.md"* ]]
+  [[ "$output" == *"staged: gamma.md"* ]]
+
+  run git -C "$CALLER_PWD" diff --cached --name-only
+  [[ "$output" == *"notes/alpha.md"* ]]
+  [[ "$output" == *"notes/gamma.md"* ]]
+}
+
+@test "notes stage: arg not in change set is silently no-op (supports shell globs)" {
+  # Simulates `notes stage notes/*.md`: task filters clean args so globs work.
+  echo "# Alpha modified" > "$CALLER_PWD/notes/alpha.md"
+  # beta.md is unchanged; passed as a simulated-glob arg.
+  echo "# Beta" > "$CALLER_PWD/notes/beta.md"
+  git -C "$CALLER_PWD" add -f "$CALLER_PWD/notes/beta.md"
+  git -C "$CALLER_PWD" commit -q -m "add beta"
+
+  run notes stage alpha.md beta.md
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"staged: alpha.md"* ]]
+  [[ "$output" != *"staged: beta.md"* ]]
+}
+
+@test "notes stage: errors with helpful message even when readable files left from another branch" {
+  # Regression: branch checkout leaves readable files for unowned notes;
+  # bare stage must error safely rather than heuristically skip.
   local repo="$BATS_TEST_TMPDIR/branch-repo"
   mkdir -p "$repo/notes"
   git -C "$repo" init -q -b main
@@ -317,17 +358,20 @@ setup() {
   echo "alpha edit" >> "$repo/notes/alpha.md"
 
   CALLER_PWD="$repo" run notes stage
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"requires explicit file argument"* ]]
+
+  CALLER_PWD="$repo" run notes stage alpha.md
   [ "$status" -eq 0 ]
   [[ "$output" == *"staged: alpha.md"* ]]
-  [[ "$output" == *"Skipped 1 new note(s)"* ]]
-  [[ "$output" == *"new: beta.md"* ]]
 
   run git -C "$repo" diff --cached --name-only
   [[ "$output" == *"notes/alpha.md"* ]]
   [[ "$output" != *"notes/beta.md"* ]]
 }
 
-@test "notes stage: skipped new manifest entry does not leak through pre-commit hook" {
+@test "notes stage: explicit-args path does not leak unrelated manifest entries through pre-commit hook" {
+  # Regression: stale manifest entry for unstaged note must not enter the commit.
   source "$MISE_CONFIG_ROOT/lib/hooks.sh"
   install_obfuscation_hook
   install_deobfuscation_hook
@@ -336,11 +380,10 @@ setup() {
   printf 'cccccccc\tgamma.md\n' >> "$MANIFEST"
   echo "# Alpha modified" > "$CALLER_PWD/notes/alpha.md"
 
-  run notes stage
+  run notes stage alpha.md
   [ "$status" -eq 0 ]
   [[ "$output" == *"staged: alpha.md"* ]]
-  [[ "$output" == *"Skipped 1 new note(s)"* ]]
-  [[ "$output" == *"new: gamma.md"* ]]
+  [[ "$output" != *"staged: gamma.md"* ]]
 
   git -C "$CALLER_PWD" commit -q -m "update alpha"
 
