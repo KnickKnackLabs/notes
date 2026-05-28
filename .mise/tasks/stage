@@ -2,7 +2,7 @@
 #MISE description="Stage notes for commit (bypasses exclude)"
 #USAGE flag "--dir <dir>" default="notes" help="Notes directory relative to repo root (default: notes)"
 #USAGE flag "--dry-run" default=#false help="Show what would be staged without doing it"
-#USAGE arg "[files]..." default="" help="Specific notes to stage (readable names, relative to notes dir). Omit to stage modified/deleted only; new notes require explicit files."
+#USAGE arg "[files]..." help="Specific notes to stage (readable names, relative to notes dir). Omit to stage modified/deleted only; new notes require explicit files."
 set -eo pipefail
 
 source "$MISE_CONFIG_ROOT/lib/common.sh"
