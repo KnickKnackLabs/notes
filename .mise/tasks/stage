@@ -2,7 +2,7 @@
 #MISE description="Stage notes for commit (bypasses exclude)"
 #USAGE flag "--dir <dir>" default="notes" help="Notes directory relative to repo root (default: notes)"
 #USAGE flag "--dry-run" default=#false help="Show what would be staged without doing it"
-#USAGE arg "[files]..." default="" help="Specific notes to stage (readable names, relative to notes dir). Omit to stage modified/deleted only; new notes require explicit files."
+#USAGE arg "[files]..." help="Specific notes to stage (readable names, relative to notes dir). Omit to stage modified/deleted only; new notes require explicit files."
 set -eo pipefail
 
 source "$MISE_CONFIG_ROOT/lib/common.sh"
@@ -18,7 +18,33 @@ if [ ! -f "$manifest" ]; then
   exit 1
 fi
 
-# Parse variadic args
+# Parse variadic args. Do not add a #USAGE default to variadic args: mise
+# versions through at least 2026.5.15 stop exporting flag env correctly when a
+# file task combines flags with a variadic default. Instead, clear inherited
+# usage_files by checking the raw task argv that mise also forwards to file
+# tasks.
+raw_has_file_args=false
+skip_next=false
+for raw_arg in "$@"; do
+  if $skip_next; then
+    skip_next=false
+    continue
+  fi
+  case "$raw_arg" in
+    --dir|--dry-run)
+      [ "$raw_arg" = "--dir" ] && skip_next=true
+      ;;
+    --dir=*|--)
+      ;;
+    *)
+      raw_has_file_args=true
+      ;;
+  esac
+done
+if ! $raw_has_file_args; then
+  usage_files=""
+fi
+
 ARGS=()
 if [ -n "${usage_files:-}" ]; then
   while IFS= read -r arg; do
