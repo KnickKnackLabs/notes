@@ -22,7 +22,12 @@ fi
 ARGS=()
 if [ -n "${usage_files:-}" ]; then
   while IFS= read -r arg; do
+    # Mise renders an empty variadic default as a shell-quoted empty string.
+    # xargs correctly unquotes it to an empty line; do not treat that as an
+    # explicit empty file argument.
+    [ -z "$arg" ] && continue
     arg="${arg#"${notes_dir}/"}"
+    [ -z "$arg" ] && continue
     ARGS+=("$arg")
   done < <(printf '%s' "${usage_files}" | xargs printf '%s\n')
 fi
