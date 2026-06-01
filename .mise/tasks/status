@@ -166,6 +166,10 @@ else
     echo "Unmerged note content conflicts: $unmerged_content_conflict_count"
     while IFS=$'\t' read -r conflict_id conflict_readable conflict_git_path; do
       [ -z "$conflict_id" ] && continue
+      if [ -z "$conflict_git_path" ]; then
+        conflict_git_path="$conflict_readable"
+        conflict_readable=""
+      fi
       if [ -n "$conflict_readable" ]; then
         echo "  $conflict_readable ($conflict_git_path)"
       else

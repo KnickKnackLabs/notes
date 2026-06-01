@@ -158,7 +158,7 @@ notes_conflict_records() {
       :
     else
       lookup_rc=$?
-      if [ "$mode" = "allow-unmapped" ] && [ "$lookup_rc" -eq 2 ]; then
+      if [ "$mode" = "allow-unmapped" ]; then
         readable=""
       else
         if [ "$lookup_rc" -eq 2 ]; then

@@ -235,3 +235,31 @@ create_conflicted_gitcrypt_header_repo() {
   [ "$status" -eq 0 ]
   echo "$output" | jq -e '.unmerged_content_conflicts.conflicts == 1'
 }
+
+@test "notes status reports conflicts even when manifest mapping is unsafe" {
+  printf 'aaaaaaaa\t../alpha.md\n' > "$NOTES_CALLER_PWD/notes/.manifest"
+  printf '# Alpha\nbase\n' > "$NOTES_CALLER_PWD/notes/aaaaaaaa"
+  commit_all "base unsafe path"
+  git -C "$NOTES_CALLER_PWD" branch -M main
+
+  git -C "$NOTES_CALLER_PWD" checkout -q -b feature
+  printf '# Alpha\nfeature\n' > "$NOTES_CALLER_PWD/notes/aaaaaaaa"
+  commit_all "feature unsafe path"
+
+  git -C "$NOTES_CALLER_PWD" checkout -q main
+  printf '# Alpha\nmain\n' > "$NOTES_CALLER_PWD/notes/aaaaaaaa"
+  commit_all "main unsafe path"
+  run git -C "$NOTES_CALLER_PWD" merge feature
+  [ "$status" -ne 0 ]
+
+  run notes status
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Unmerged note content conflicts: 1"* ]]
+  [[ "$output" == *"notes/aaaaaaaa (unmapped; manifest unavailable)"* ]]
+
+  run notes status --json
+
+  [ "$status" -eq 0 ]
+  echo "$output" | jq -e '.unmerged_content_conflicts.conflicts == 1'
+}
