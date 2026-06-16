@@ -135,7 +135,10 @@ if [ -n "$conflicting_notes" ]; then
   fi
 fi
 
-double_tracked=$(detect_double_tracked_notes "$TARGET_DIR" "$notes_dir" 2>/dev/null) || true
+double_tracked=""
+if ! double_tracked=$(detect_double_tracked_notes "$TARGET_DIR" "$notes_dir" 2>/dev/null); then
+  double_tracked=""
+fi
 if [ -n "$double_tracked" ]; then
   blocked_tracked=()
   while IFS=$'\t' read -r dt_id dt_relpath; do
