@@ -4,6 +4,7 @@
 set -euo pipefail
 
 source "$MISE_CONFIG_ROOT/lib/common.sh"
+source "$MISE_CONFIG_ROOT/lib/obfuscate.sh"
 source "$MISE_CONFIG_ROOT/lib/suppress.sh"
 require_git
 
