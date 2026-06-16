@@ -8,8 +8,6 @@
 
 load test_helper
 
-# ── AC 1: All encrypted blobs pass ───────────────────────────
-
 @test "verify-blobs: all encrypted blobs pass" {
   mkdir -p "$NOTES_CALLER_PWD/notes"
   printf '\x00GITCRYPT\x00aaa00001\talpha.md\n' > "$NOTES_CALLER_PWD/notes/.manifest"
@@ -21,8 +19,6 @@ load test_helper
   [ "$status" -eq 0 ]
   echo "$output" | grep -q "OK"
 }
-
-# ── AC 2: Plaintext manifest fails ──────────────────────────
 
 @test "verify-blobs: plaintext manifest fails" {
   mkdir -p "$NOTES_CALLER_PWD/notes"
@@ -36,8 +32,6 @@ load test_helper
   echo "$output" | grep -q "not encrypted"
   echo "$output" | grep -q ".manifest"
 }
-
-# ── AC 3: One encrypted + one plaintext fails + names path ──
 
 @test "verify-blobs: mixed encryption fails and names plaintext path" {
   mkdir -p "$NOTES_CALLER_PWD/notes"
@@ -54,8 +48,6 @@ load test_helper
   echo "$output" | grep -q "not encrypted"
 }
 
-# ── AC 4: Tracked readable .md fails ────────────────────────
-
 @test "verify-blobs: tracked readable note fails" {
   mkdir -p "$NOTES_CALLER_PWD/notes"
   printf '\x00GITCRYPT\x00aaa00001\talpha.md\n' > "$NOTES_CALLER_PWD/notes/.manifest"
@@ -69,11 +61,6 @@ load test_helper
   echo "$output" | grep -q "tracked readable note"
   echo "$output" | grep -q "status.md"
 }
-
-# ── AC 5: Works against a ref without checkout write ────────
-# The command uses git ls-tree + git show <ref>:<path>, which never
-# touches the working tree. This test proves the approach by verifying
-# a stale branch ref without checking it out.
 
 @test "verify-blobs: works against a ref without checkout" {
   mkdir -p "$NOTES_CALLER_PWD/notes"
@@ -99,15 +86,11 @@ load test_helper
   echo "$output" | grep -q "OK"
 }
 
-# ── Edge: nonexistent ref fails ─────────────────────────────
-
 @test "verify-blobs: nonexistent ref fails" {
   run notes verify-blobs --ref nonexistent
   [ "$status" -eq 1 ]
   echo "$output" | grep -q "does not exist"
 }
-
-# ── Edge: no notes directory fails ─────────────────────────
 
 @test "verify-blobs: no notes directory fails" {
   echo "no notes here" > "$NOTES_CALLER_PWD/readme.md"
@@ -133,8 +116,6 @@ load test_helper
   echo "$output" | grep -q "OK"
 }
 
-# ── Edge: empty notes directory passes ──────────────────────
-
 @test "verify-blobs: empty notes directory with no manifest fails" {
   mkdir -p "$NOTES_CALLER_PWD/notes"
   # An empty .manifest file has no git-crypt magic bytes
@@ -146,8 +127,6 @@ load test_helper
   [ "$status" -eq 1 ]
   echo "$output" | grep -q "not encrypted"
 }
-
-# ── Edge: subdirectory notes are checked ────────────────────
 
 @test "verify-blobs: checks notes in subdirectories" {
   mkdir -p "$NOTES_CALLER_PWD/notes/subdir"
@@ -177,10 +156,6 @@ load test_helper
   echo "$output" | grep -q "b002"
   echo "$output" | grep -q "not encrypted"
 }
-
-# ── Edge: --strict mode fails on dirty working tree ─────────
-# Notes: --strict invokes `notes changes --summary` via mise run,
-# which needs a notes directory with a valid manifest.
 
 @test "verify-blobs: --strict fails on dirty working tree" {
   mkdir -p "$NOTES_CALLER_PWD/notes"
