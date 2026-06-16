@@ -226,7 +226,7 @@ set_status_suppression() {
   fi
 
   # Add exclude entries for readable names
-  add_exclude_entries "$abs_notes_dir" "${scoped_ids[@]}"
+  add_exclude_entries "$abs_notes_dir" ${scoped_ids[@]+"${scoped_ids[@]}"}
 }
 
 # Clear assume-unchanged flags + remove exclude entries for readable names.
@@ -258,7 +258,7 @@ clear_status_suppression() {
   fi
 
   # Remove exclude entries for readable names
-  remove_exclude_entries "$abs_notes_dir" "${scoped_ids[@]}"
+  remove_exclude_entries "$abs_notes_dir" ${scoped_ids[@]+"${scoped_ids[@]}"}
 }
 
 _note_relpath_is_safe() {

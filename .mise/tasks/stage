@@ -135,6 +135,31 @@ if [ -n "$conflicting_notes" ]; then
   fi
 fi
 
+double_tracked=$(detect_double_tracked_notes "$TARGET_DIR" "$notes_dir" 2>/dev/null) || true
+if [ -n "$double_tracked" ]; then
+  blocked_tracked=()
+  while IFS=$'\t' read -r dt_id dt_relpath; do
+    [ -z "$dt_id" ] && continue
+    scope_matches "$dt_relpath" || continue
+    blocked_tracked+=("$dt_id"$'\t'"$dt_relpath")
+  done <<< "$double_tracked"
+
+  if [ ${#blocked_tracked[@]} -gt 0 ]; then
+    echo "Error: double-tracked notes detected; refusing to stage." >&2
+    echo "Readable names are tracked in git alongside their obfuscated IDs (notes#51):" >&2
+    for dt in "${blocked_tracked[@]}"; do
+      IFS=$'\t' read -r dt_id dt_relpath <<< "$dt"
+      echo "  $notes_dir/$dt_relpath (also tracked as $notes_dir/$dt_id)" >&2
+    done
+    echo "" >&2
+    echo "This causes silent content drift. To fix:" >&2
+    echo "  1. Decide which version is correct." >&2
+    echo "  2. Run: git rm --cached $notes_dir/<readable>" >&2
+    echo "  3. Commit the untrack, then retry 'notes stage'." >&2
+    exit 1
+  fi
+fi
+
 while IFS=$'\t' read -r status relpath; do
   scope_matches "$relpath" || continue
 

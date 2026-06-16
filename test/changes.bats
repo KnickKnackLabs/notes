@@ -286,6 +286,61 @@ rename_manifest_entry_in_head() {
   grep -q "notes/beta.md" "$exclude"
 }
 
+@test "status suppression helpers tolerate empty scope under nounset" {
+  run bash -c '
+    set -euo pipefail
+    source "$1/lib/common.sh"
+    source "$1/lib/suppress.sh"
+    set_status_suppression "$2/notes"
+    clear_status_suppression "$2/notes"
+  ' _ "$REPO_DIR" "$NOTES_CALLER_PWD"
+
+  [ "$status" -eq 0 ]
+}
+
+@test "notes suppress-refresh rebuilds stale exclude entries" {
+  local repo_root exclude
+  repo_root=$(git -C "$NOTES_CALLER_PWD" rev-parse --show-toplevel)
+  exclude="$repo_root/.git/info/exclude"
+
+  cat > "$exclude" <<EOF
+# custom keep
+$EXCLUDE_BEGIN
+notes/alpha.md
+$EXCLUDE_END
+EOF
+
+  run notes suppress-refresh
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Status suppression rebuilt"* ]]
+  grep -q "# custom keep" "$exclude"
+  grep -q "notes/alpha.md" "$exclude"
+  grep -q "notes/beta.md" "$exclude"
+
+  run git -C "$NOTES_CALLER_PWD" status --porcelain
+  [ -z "$output" ]
+}
+
+@test "notes suppress-refresh clears stale assume-unchanged IDs from deobfuscation state" {
+  mkdir -p "$NOTES_CALLER_PWD/.git/info"
+  printf 'stale old id\n' > "$NOTES_CALLER_PWD/notes/deadbeef"
+  git -C "$NOTES_CALLER_PWD" add notes/deadbeef
+  git -C "$NOTES_CALLER_PWD" commit -q -m "add stale old id"
+  git -C "$NOTES_CALLER_PWD" update-index --assume-unchanged notes/deadbeef
+  printf 'deadbeef\told.md\t012345\n' > "$NOTES_CALLER_PWD/.git/info/notes-obfuscation-state"
+
+  run git -C "$NOTES_CALLER_PWD" ls-files -v notes/deadbeef
+  [ "$status" -eq 0 ]
+  [[ "$output" == h* ]]
+
+  run notes suppress-refresh
+  [ "$status" -eq 0 ]
+
+  run git -C "$NOTES_CALLER_PWD" ls-files -v notes/deadbeef
+  [ "$status" -eq 0 ]
+  [[ "$output" == H* ]]
+}
+
 # ── stage via git add -f ─────────────────────────────────────
 
 @test "git add -f works despite exclude" {
@@ -482,6 +537,35 @@ SH
 
   run git -C "$NOTES_CALLER_PWD" diff --cached --name-only
   [[ "$output" != *"notes/alpha.md"* ]]
+}
+
+@test "notes stage: refuses double-tracked notes (readable + obfuscated both in index)" {
+  local alpha_id
+  alpha_id=$(manifest_id_for_name "$MANIFEST" "alpha.md")
+
+  # Simulate the double-tracking bug from notes#51: both readable and hex tracked.
+  # Use identical content so the dual-present conflict check does not fire first.
+  echo "# Alpha obfuscated" > "$NOTES_CALLER_PWD/notes/alpha.md"
+  echo "# Alpha obfuscated" > "$NOTES_CALLER_PWD/notes/$alpha_id"
+  git -C "$NOTES_CALLER_PWD" add -f "notes/alpha.md"
+
+  run notes stage alpha.md
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"double-tracked"* ]]
+  [[ "$output" == *"alpha.md"* ]]
+  [[ "$output" == *"notes#51"* ]]
+}
+
+@test "notes stage: does not refuse when readable is only on disk, not tracked" {
+  local alpha_id
+  alpha_id=$(manifest_id_for_name "$MANIFEST" "alpha.md")
+
+  # Normal deobfuscated state: readable on disk, hex tracked in index
+  echo "# Alpha v2" > "$NOTES_CALLER_PWD/notes/alpha.md"
+
+  run notes stage alpha.md
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"staged: alpha.md"* ]]
 }
 
 @test "notes stage --all refuses stale readable files left from another branch" {

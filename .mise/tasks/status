@@ -64,6 +64,14 @@ if [ "$enc_status" != "locked" ] && [ -f "$NOTES_DIR/.manifest" ]; then
   fi
 fi
 
+# --- Double-tracked notes (readable + obfuscated both tracked) ---
+
+double_tracked=$(detect_double_tracked_notes "$TARGET_DIR" "$NOTES_DIR" 2>/dev/null) || true
+double_tracked_count=0
+if [ -n "$double_tracked" ]; then
+  double_tracked_count=$(printf '%s\n' "$double_tracked" | grep -c . || true)
+fi
+
 # --- Unmerged encrypted/obfuscated note content conflicts ---
 
 unmerged_content_conflicts=$(notes_conflict_records "$TARGET_DIR" "$NOTES_DIR" allow-unmapped 2>/dev/null) || true
@@ -102,11 +110,13 @@ if [ "$JSON" = "true" ]; then
     jq -nc \
       --arg enc "$enc_status" \
       --argjson enc_unlocked "$enc_unlocked" \
+      --argjson double_tracked "$double_tracked_count" \
       --argjson unmerged_content_conflicts "$unmerged_content_conflict_count" \
       '{
         encryption: { status: $enc, unlocked: $enc_unlocked },
         obfuscation: { status: "unknown", notes: null },
         incomplete_deobfuscation: { conflicts: 0 },
+        double_tracked: { conflicts: $double_tracked },
         unmerged_content_conflicts: { conflicts: $unmerged_content_conflicts },
         changes: null
       }'
@@ -122,11 +132,13 @@ if [ "$JSON" = "true" ]; then
       --argjson chg_stale "$changes_stale" \
       --argjson chg_total "$changes_total" \
       --argjson incomplete_conflicts "$incomplete_conflicts" \
+      --argjson double_tracked "$double_tracked_count" \
       --argjson unmerged_content_conflicts "$unmerged_content_conflict_count" \
       '{
         encryption: { status: $enc, unlocked: $enc_unlocked },
         obfuscation: { status: $obf, notes: $total_notes },
         incomplete_deobfuscation: { conflicts: $incomplete_conflicts },
+        double_tracked: { conflicts: $double_tracked },
         unmerged_content_conflicts: { conflicts: $unmerged_content_conflicts },
         changes: { total: $chg_total, modified: $chg_modified, new: $chg_new, deleted: $chg_deleted, stale_readable: $chg_stale }
       }'
@@ -158,6 +170,20 @@ else
       else
         echo "Changes:     none"
       fi
+    fi
+    if [ "$double_tracked_count" -gt 0 ]; then
+      echo ""
+      echo "DOUBLE-TRACKED NOTES: $double_tracked_count file(s) tracked as both readable and obfuscated!"
+      echo "This is a data-loss bug (notes#51). Content will silently drift on every commit."
+      while IFS=$'\t' read -r dt_id dt_relpath; do
+        [ -z "$dt_id" ] && continue
+        echo "  $NOTES_DIR/$dt_relpath (also tracked as $NOTES_DIR/$dt_id)"
+      done <<< "$double_tracked"
+      echo ""
+      echo "To fix:"
+      echo "  1. Decide which version is correct (readable vs hex)."
+      echo "  2. Run: git rm --cached $NOTES_DIR/<readable>"
+      echo "  3. Commit the untrack, then use 'notes stage' to sync."
     fi
   fi
 

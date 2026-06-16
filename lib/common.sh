@@ -146,3 +146,25 @@ manifest_name_for_id() {
   [ ! -f "$manifest" ] && return
   grep "^${id}"$'\t' "$manifest" | cut -f2
 }
+
+# Detect notes that are tracked both as readable names and as obfuscated IDs.
+# This is the double-tracking bug from notes#51: a readable-named file got
+# committed alongside its obfuscated hex counterpart, causing silent content
+# drift on every subsequent commit.
+#
+# Outputs one line per double-tracked note: "<id>\t<relpath>"
+# Usage: detect_double_tracked_notes <repo_root> <notes_dir_rel>
+detect_double_tracked_notes() {
+  local repo_root="${1:?usage: detect_double_tracked_notes <repo_root> <notes_dir_rel>}"
+  local notes_dir_rel="${2:?usage: detect_double_tracked_notes <repo_root> <notes_dir_rel>}"
+  local manifest="$repo_root/$notes_dir_rel/.manifest"
+  [ ! -f "$manifest" ] && return 0
+
+  while IFS=$'\t' read -r id relpath; do
+    [ -z "$id" ] && continue
+    # If the readable path is tracked in git's index, it's double-tracked.
+    if git -C "$repo_root" ls-files --error-unmatch -- "$notes_dir_rel/$relpath" >/dev/null 2>&1; then
+      printf '%s\t%s\n' "$id" "$relpath"
+    fi
+  done < "$manifest"
+}

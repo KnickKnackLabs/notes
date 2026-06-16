@@ -62,6 +62,42 @@ load test_helper
   [[ "$output" == *"notes/aaaaaaaa"* ]]
 }
 
+@test "status reports double-tracked notes when readable path is tracked in index" {
+  mkdir -p "$TARGET_DIR/notes"
+  git -C "$TARGET_DIR" init -q
+  printf 'aaaaaaaa\talpha.md\n' > "$TARGET_DIR/notes/.manifest"
+  echo "# Alpha tracked" > "$TARGET_DIR/notes/alpha.md"
+  echo "# Alpha obfuscated" > "$TARGET_DIR/notes/aaaaaaaa"
+  git -C "$TARGET_DIR" add -A
+  git -C "$TARGET_DIR" commit -q -m "init"
+
+  # Simulate the double-tracking bug: readable name committed alongside hex
+  # (In the test repo, both are committed via `add -A` above. This matches the
+  # real-world state where readable + hex both exist in the index.)
+
+  run notes status
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"DOUBLE-TRACKED NOTES"* ]]
+  [[ "$output" == *"alpha.md"* ]]
+  [[ "$output" == *"notes/aaaaaaaa"* ]]
+}
+
+@test "status does not report double-tracked when only obfuscated is tracked" {
+  mkdir -p "$TARGET_DIR/notes"
+  git -C "$TARGET_DIR" init -q
+  printf 'aaaaaaaa\talpha.md\n' > "$TARGET_DIR/notes/.manifest"
+  echo "# Alpha obfuscated" > "$TARGET_DIR/notes/aaaaaaaa"
+  git -C "$TARGET_DIR" add -A
+  git -C "$TARGET_DIR" commit -q -m "init"
+
+  # Readable is on disk but not tracked
+  echo "# Alpha readable" > "$TARGET_DIR/notes/alpha.md"
+
+  run notes status
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"DOUBLE-TRACKED NOTES"* ]]
+}
+
 # --- JSON output ---
 
 @test "status --json outputs valid JSON" {
