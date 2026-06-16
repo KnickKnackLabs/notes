@@ -66,18 +66,24 @@ fi
 
 # --- Double-tracked notes (readable + obfuscated both tracked) ---
 
-double_tracked=$(detect_double_tracked_notes "$TARGET_DIR" "$NOTES_DIR" 2>/dev/null) || true
+double_tracked=""
+if ! double_tracked=$(detect_double_tracked_notes "$TARGET_DIR" "$NOTES_DIR" 2>/dev/null); then
+  double_tracked=""
+fi
 double_tracked_count=0
 if [ -n "$double_tracked" ]; then
-  double_tracked_count=$(printf '%s\n' "$double_tracked" | grep -c . || true)
+  double_tracked_count=$(printf '%s\n' "$double_tracked" | wc -l | tr -d ' ')
 fi
 
 # --- Unmerged encrypted/obfuscated note content conflicts ---
 
-unmerged_content_conflicts=$(notes_conflict_records "$TARGET_DIR" "$NOTES_DIR" allow-unmapped 2>/dev/null) || true
+unmerged_content_conflicts=""
+if ! unmerged_content_conflicts=$(notes_conflict_records "$TARGET_DIR" "$NOTES_DIR" allow-unmapped 2>/dev/null); then
+  unmerged_content_conflicts=""
+fi
 unmerged_content_conflict_count=0
 if [ -n "$unmerged_content_conflicts" ]; then
-  unmerged_content_conflict_count=$(printf '%s\n' "$unmerged_content_conflicts" | grep -c . || true)
+  unmerged_content_conflict_count=$(printf '%s\n' "$unmerged_content_conflicts" | wc -l | tr -d ' ')
 fi
 
 # --- Changes (only when deobfuscated) ---
