@@ -14,37 +14,42 @@ ref="${usage_ref:-HEAD}"
 notes_dir="${usage_dir:-notes}"
 strict="${usage_strict:-false}"
 
-# ── Validate ref exists ───────────────────────────────────────
+# Git-crypt encrypted files start with these 10 bytes:
+#   00 47 49 54 43 52 59 50 54 00  (\0GITCRYPT\0)
+# Compare the exact byte sequence as hex so plaintext strings such as
+# "xxGITCRYPT" do not false-pass.
+gitcrypt_header_hex="00474954435259505400"
 
-if ! git cat-file -e "$ref" 2>/dev/null; then
-  echo "Error: ref '$ref' does not exist" >&2
+# ── Validate ref exists and is tree-ish ───────────────────────
+
+if ! git rev-parse --verify --quiet "$ref^{tree}" >/dev/null; then
+  echo "Error: ref '$ref' does not exist or is not tree-ish" >&2
   exit 1
 fi
 
 # ── Validate notes dir exists in ref ──────────────────────────
 
-if ! git ls-tree -d "$ref" -- "$notes_dir" 2>/dev/null | grep -q .; then
+if ! git ls-tree -d -z "$ref" -- "$notes_dir" 2>/dev/null | grep -q .; then
   echo "Error: directory '$notes_dir/' not found in ref '$ref'" >&2
   exit 1
 fi
 
 errors=0
-declare -a error_paths=()
+error_paths=()
 
 # ── Helper: check if a blob at <ref>:<path> has git-crypt magic bytes ──
-# Git-crypt encrypted files start with \x00GITCRYPT\x00 (10 bytes).
-# The grep for "GITCRYPT" in the first 10 bytes is sufficient to identify
-# encrypted content (same approach as setup task line 144).
 _check_encrypted() {
-  local r="$1" p="$2"
-  git show "$r:$p" 2>/dev/null | head -c 10 | grep -q "GITCRYPT"
+  local r="$1" p="$2" header_hex
+  if ! header_hex=$(git show "$r:$p" 2>/dev/null | dd bs=1 count=10 2>/dev/null | od -An -tx1 | tr -d ' \n'); then
+    return 1
+  fi
+  [ "$header_hex" = "$gitcrypt_header_hex" ]
 }
 
 # ── 1. Check .manifest is encrypted ──────────────────────────
 
 manifest_path="$notes_dir/.manifest"
-# Check .manifest exists and is encrypted in the ref
-if git ls-tree -r "$ref" --name-only -- "$manifest_path" 2>/dev/null | grep -qxF "$manifest_path"; then
+if git cat-file -e "$ref:$manifest_path" 2>/dev/null; then
   if ! _check_encrypted "$ref" "$manifest_path"; then
     echo "FAIL: $manifest_path is not encrypted in ref '$ref'" >&2
     errors=$((errors + 1))
@@ -57,13 +62,11 @@ else
 fi
 
 # ── 2. Walk all tracked blobs under notes dir ──────────────────
-# git ls-tree output format: "<mode> <type> <hash>\t<path>" — tab only
-# between hash and path. Use awk to extract the path (column 4).
-while IFS= read -r path; do
+while IFS= read -r -d '' path; do
   [ -z "$path" ] && continue
   [[ "$path" == "$manifest_path" ]] && continue
 
-  # Reject tracked readable-named notes (*.md), which indicates double-tracking
+  # Reject tracked readable-named notes (*.md), which indicates double-tracking.
   if [[ "$path" == *.md ]]; then
     echo "FAIL: tracked readable note: $path in ref '$ref'" >&2
     errors=$((errors + 1))
@@ -71,26 +74,34 @@ while IFS= read -r path; do
     continue
   fi
 
-  # Check for git-crypt magic bytes on obfuscated blobs
   if ! _check_encrypted "$ref" "$path"; then
     echo "FAIL: $path is not encrypted in ref '$ref'" >&2
     errors=$((errors + 1))
     error_paths+=("$path")
   fi
-done < <(git ls-tree -r "$ref" -- "$notes_dir/" 2>/dev/null | awk '{print $4}')
+done < <(git ls-tree -r -z --name-only "$ref" -- "$notes_dir/" 2>/dev/null)
 
 # ── 3. Strict mode: check working tree cleanliness ────────────
-# Parse the notes changes --summary output. Clean state outputs either
-# "No changes." (no output lines at all) or is empty. Only report failure
-# when there are actual change lines (modified/new/deleted).
-if [ "${strict}" = "true" ]; then
-  changes_output=$(cd "$MISE_CONFIG_ROOT" && NOTES_CALLER_PWD="$TARGET_DIR" mise run changes --summary 2>/dev/null || true)
-  # Filter out the clean-state message; only flag real changes
-  real_changes=$(echo "$changes_output" | grep -v "^No changes\.$" | grep -v "^0 change" | grep -v "^$" || true)
-  if [ -n "$real_changes" ]; then
-    echo "FAIL: working tree has pending note changes (--strict mode):" >&2
+if [ "$strict" = "true" ]; then
+  changes_output=""
+  if ! changes_output=$(cd "$MISE_CONFIG_ROOT" && NOTES_CALLER_PWD="$TARGET_DIR" mise run changes --dir "$notes_dir" --summary 2>&1); then
+    echo "FAIL: could not inspect working-tree note changes (--strict mode):" >&2
     echo "$changes_output" >&2
     errors=$((errors + 1))
+  else
+    real_changes=""
+    while IFS= read -r line; do
+      case "$line" in
+        ""|"No changes."|"0 change"*) ;;
+        *) real_changes+="$line"$'\n' ;;
+      esac
+    done <<< "$changes_output"
+
+    if [ -n "$real_changes" ]; then
+      echo "FAIL: working tree has pending note changes (--strict mode):" >&2
+      echo "$changes_output" >&2
+      errors=$((errors + 1))
+    fi
   fi
 fi
 
@@ -99,7 +110,7 @@ fi
 if [ "$errors" -gt 0 ]; then
   echo "" >&2
   echo "ERROR: $errors blob(s) are not properly encrypted in ref '$ref'" >&2
-  for p in "${error_paths[@]}"; do
+  for p in ${error_paths[@]+"${error_paths[@]}"}; do
     echo "  - $p" >&2
   done
   exit 1

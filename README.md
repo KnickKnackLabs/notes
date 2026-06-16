@@ -26,6 +26,9 @@ notes parse notes/project-plan.md
 # Check encryption + obfuscation state.
 notes status
 
+# Verify committed note blobs are encrypted before publication.
+notes verify-blobs --ref HEAD
+
 # Commit changed notes through notes' obfuscation/exclude rules.
 notes commit -m "notes: update project plan" notes/project-plan.md
 ```
@@ -54,6 +57,10 @@ notes parse notes/project-plan.md
 notes diff
 notes diff main...HEAD
 notes diff --pr 109 --out /tmp/notes-109-review
+
+# Verify a committed ref has only encrypted note blobs.
+notes verify-blobs --ref HEAD
+notes verify-blobs --ref HEAD --strict
 
 # Inspect unresolved encrypted-note merge conflicts without resolving them.
 notes conflicts --out /tmp/notes-conflicts

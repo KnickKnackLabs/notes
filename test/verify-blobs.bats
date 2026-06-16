@@ -33,6 +33,19 @@ load test_helper
   echo "$output" | grep -q ".manifest"
 }
 
+@test "verify-blobs: false magic string without exact header fails" {
+  mkdir -p "$NOTES_CALLER_PWD/notes"
+  printf 'xxGITCRYPTaaa00001\talpha.md\n' > "$NOTES_CALLER_PWD/notes/.manifest"
+  printf 'xxGITCRYPTplaintext-ish alpha' > "$NOTES_CALLER_PWD/notes/aaa00001"
+  git -C "$NOTES_CALLER_PWD" add -A
+  git -C "$NOTES_CALLER_PWD" commit -q -m "false magic"
+
+  run notes verify-blobs
+  [ "$status" -eq 1 ]
+  echo "$output" | grep -q ".manifest"
+  echo "$output" | grep -q "aaa00001"
+}
+
 @test "verify-blobs: mixed encryption fails and names plaintext path" {
   mkdir -p "$NOTES_CALLER_PWD/notes"
   printf '\x00GITCRYPT\x00aaa00001\talpha.md\nbbb00002\tbeta.md\n' \
@@ -116,6 +129,18 @@ load test_helper
   echo "$output" | grep -q "OK"
 }
 
+@test "verify-blobs: --dir handles notes path with spaces" {
+  mkdir -p "$NOTES_CALLER_PWD/my notes"
+  printf '\x00GITCRYPT\x00c001\tnote.md\n' > "$NOTES_CALLER_PWD/my notes/.manifest"
+  printf '\x00GITCRYPT\x00encrypted' > "$NOTES_CALLER_PWD/my notes/c001"
+  git -C "$NOTES_CALLER_PWD" add -A
+  git -C "$NOTES_CALLER_PWD" commit -q -m "space dir"
+
+  run notes verify-blobs --dir "my notes"
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -q "OK"
+}
+
 @test "verify-blobs: empty notes directory with no manifest fails" {
   mkdir -p "$NOTES_CALLER_PWD/notes"
   # An empty .manifest file has no git-crypt magic bytes
@@ -173,6 +198,21 @@ load test_helper
   run notes verify-blobs --strict
   [ "$status" -eq 1 ]
   echo "$output" | grep -q "strict"
+}
+
+@test "verify-blobs: --strict checks custom notes dir" {
+  mkdir -p "$NOTES_CALLER_PWD/mynotes"
+  printf '\x00GITCRYPT\x00a001\tnote.md\n' > "$NOTES_CALLER_PWD/mynotes/.manifest"
+  printf '\x00GITCRYPT\x00encrypted' > "$NOTES_CALLER_PWD/mynotes/a001"
+  git -C "$NOTES_CALLER_PWD" add -A
+  git -C "$NOTES_CALLER_PWD" commit -q -m "base"
+
+  echo -e "a001\tnote.md" > "$NOTES_CALLER_PWD/mynotes/.manifest"
+  echo "dirty custom note" > "$NOTES_CALLER_PWD/mynotes/dirty.md"
+
+  run notes verify-blobs --dir mynotes --strict
+  [ "$status" -eq 1 ]
+  echo "$output" | grep -q "dirty.md"
 }
 
 @test "verify-blobs: --strict passes on clean working tree" {
