@@ -2,7 +2,9 @@
 __pycache__/
 *.pyc
 
-# Local pi agent context (not upstream)
+# Local agent context (not upstream)
+/memory/
+/CLAUDE.md
 AGENTS.md
 .pi/
 .piac/

@@ -734,7 +734,7 @@ SH
 # ── commit wrapper ───────────────────────────────────────────
 
 @test "notes commit: explicit file commits modified note and leaves clean readable tree" {
-  notes install-hooks
+  notes install-hooks --yes
 
   echo "# Alpha v2" > "$NOTES_CALLER_PWD/notes/alpha.md"
 
@@ -762,7 +762,7 @@ SH
 }
 
 @test "notes commit --all commits modified new and deleted notes" {
-  notes install-hooks
+  notes install-hooks --yes
 
   echo "# Alpha v2" > "$NOTES_CALLER_PWD/notes/alpha.md"
   echo "# Gamma" > "$NOTES_CALLER_PWD/notes/gamma.md"
@@ -786,7 +786,7 @@ SH
 }
 
 @test "notes commit: path-limited commit leaves unrelated dirty notes uncommitted" {
-  notes install-hooks
+  notes install-hooks --yes
 
   local alpha_id beta_id
   alpha_id=$(manifest_id_for_name "$MANIFEST" "alpha.md")
@@ -827,7 +827,7 @@ SH
 }
 
 @test "notes commit: no args requires explicit scope" {
-  notes install-hooks
+  notes install-hooks --yes
   local before
   before=$(git -C "$NOTES_CALLER_PWD" rev-parse HEAD)
   echo "# Alpha v2" > "$NOTES_CALLER_PWD/notes/alpha.md"
@@ -842,7 +842,7 @@ SH
 }
 
 @test "notes commit: explicit unknown path fails instead of silently committing nothing" {
-  notes install-hooks
+  notes install-hooks --yes
   local before
   before=$(git -C "$NOTES_CALLER_PWD" rev-parse HEAD)
   echo "# Alpha v2" > "$NOTES_CALLER_PWD/notes/alpha.md"
@@ -858,7 +858,7 @@ SH
 }
 
 @test "notes commit: path traversal argument fails instead of silently committing nothing" {
-  notes install-hooks
+  notes install-hooks --yes
   local before
   before=$(git -C "$NOTES_CALLER_PWD" rev-parse HEAD)
   echo "# Alpha v2" > "$NOTES_CALLER_PWD/notes/alpha.md"
@@ -875,7 +875,7 @@ SH
 }
 
 @test "notes commit: refuses pre-staged changes before staging notes" {
-  notes install-hooks
+  notes install-hooks --yes
   local before
   before=$(git -C "$NOTES_CALLER_PWD" rev-parse HEAD)
   echo "readme" > "$NOTES_CALLER_PWD/README.md"
@@ -893,7 +893,7 @@ SH
 }
 
 @test "notes commit: detects non-note paths added by another pre-commit hook" {
-  notes install-hooks
+  notes install-hooks --yes
   mkdir -p "$NOTES_CALLER_PWD/.git/hooks/pre-commit.d"
   cat > "$NOTES_CALLER_PWD/.git/hooks/pre-commit.d/zz-stage-generated" <<'HOOK'
 #!/usr/bin/env bash

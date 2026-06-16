@@ -47,7 +47,7 @@ setup() {
   git -C "$ORIGIN" commit -q -m "obfuscate"
 
   # Install hooks on origin too (both sides need them)
-  notes install-hooks
+  notes install-hooks --yes
   notes deobfuscate
 
   git -C "$ORIGIN" push -q
@@ -61,7 +61,7 @@ setup() {
   # Deobfuscate + install hooks (including merge driver) on local
   export NOTES_CALLER_PWD="$LOCAL"
   notes deobfuscate
-  notes install-hooks
+  notes install-hooks --yes
   _use_local_merge_driver "$LOCAL"
 }
 
@@ -372,7 +372,7 @@ EOT
   git -C "$repo" add .gitattributes notes/.manifest notes/aaa00001
   git -C "$repo" commit -q -m "init"
 
-  NOTES_CALLER_PWD="$repo" notes install-hooks >/dev/null
+  NOTES_CALLER_PWD="$repo" notes install-hooks --yes >/dev/null
   _use_local_merge_driver "$repo"
 
   git -C "$repo" switch -q -c feature

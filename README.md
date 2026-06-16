@@ -74,7 +74,7 @@ notes lock --yes
 notes unlock
 ```
 
-`setup` and `lock` require confirmation because they mutate repository encryption state. In automation, pass `--yes` explicitly.
+`setup`, `lock`, `install-hooks`, and `unlock --force` require confirmation because they mutate repository encryption or hook state. In automation, pass `--yes` explicitly.
 
 ## What notes manages
 

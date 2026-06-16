@@ -398,7 +398,7 @@ setup() {
 # --- Hook installation ---
 
 @test "install-hooks no-ops for uninitialized plain notes directories" {
-  run notes install-hooks
+  run notes install-hooks --yes
   [ "$status" -eq 0 ]
   [[ "$output" == *"No notes manifest found"* ]]
   [[ "$output" == *"notes setup --yes"* ]]
@@ -409,9 +409,35 @@ setup() {
   [ -z "$(git -C "$NOTES_CALLER_PWD" config --get merge.manifest.driver || true)" ]
 }
 
+@test "install-hooks refuses without confirmation in headless context" {
+  notes obfuscate
+
+  run without_confirmation "$BATS_TEST_TMPDIR/missing-tty" notes install-hooks
+
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"confirmation required"* ]]
+  [[ "$output" == *"Re-run with --yes"* ]]
+
+  # Hooks should not be installed
+  [ ! -x "$NOTES_CALLER_PWD/.git/hooks/pre-commit" ]
+  [ ! -d "$NOTES_CALLER_PWD/.git/hooks/pre-commit.d" ]
+}
+
+@test "install-hooks --yes proceeds with hook installation" {
+  notes obfuscate
+
+  run notes install-hooks --yes
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Installed hooks"* ]]
+
+  # Verify hooks were actually installed
+  [ -x "$NOTES_CALLER_PWD/.git/hooks/pre-commit" ]
+  grep -q "Generic hook dispatcher" "$NOTES_CALLER_PWD/.git/hooks/pre-commit"
+}
+
 @test "install-hooks installs pre-commit hooks" {
   notes obfuscate
-  notes install-hooks
+  notes install-hooks --yes
 
   [ -x "$NOTES_CALLER_PWD/.git/hooks/pre-commit" ]
   grep -q "Generic hook dispatcher" "$NOTES_CALLER_PWD/.git/hooks/pre-commit"
@@ -431,7 +457,7 @@ setup() {
   git -C "$NOTES_CALLER_PWD" add .gitattributes
   git -C "$NOTES_CALLER_PWD" commit -q --no-verify -m "enable encryption"
 
-  notes install-hooks
+  notes install-hooks --yes
 
   local blob
   blob=$(printf 'aaa00001\talpha.md\n' | git -C "$NOTES_CALLER_PWD" hash-object -w --stdin)
@@ -563,7 +589,7 @@ EOF
 
   # Deobfuscate + install hooks explicitly
   notes deobfuscate
-  notes install-hooks
+  notes install-hooks --yes
 
   # Add a new deobfuscated file + stage everything
   echo -e "---\ntitle: Sneaky\n---\n# Sneaky" > "$NOTES_CALLER_PWD/notes/sneaky.md"
@@ -591,7 +617,7 @@ EOF
   git -C "$NOTES_CALLER_PWD" commit -q --no-verify -m "obfuscated"
 
   notes deobfuscate
-  notes install-hooks
+  notes install-hooks --yes
   git -C "$NOTES_CALLER_PWD" add .gitattributes
   git -C "$NOTES_CALLER_PWD" commit -q --no-verify -m "install hook attributes"
 
@@ -617,7 +643,7 @@ EOT
 
 @test "install-hooks installs post-commit deobfuscation hook" {
   notes obfuscate
-  notes install-hooks
+  notes install-hooks --yes
 
   [ -x "$NOTES_CALLER_PWD/.git/hooks/post-commit" ]
   grep -q "Generic hook dispatcher" "$NOTES_CALLER_PWD/.git/hooks/post-commit"
@@ -633,7 +659,7 @@ EOT
 
   # Deobfuscate + install hooks explicitly
   notes deobfuscate
-  notes install-hooks
+  notes install-hooks --yes
 
   # Add a new file and commit — hooks should handle the round-trip
   echo -e "---\ntitle: New Note\n---\n# New" > "$NOTES_CALLER_PWD/notes/new-note.md"
@@ -659,7 +685,7 @@ EOT
   git -C "$NOTES_CALLER_PWD" commit -q --no-verify -m "obfuscated"
 
   notes deobfuscate
-  notes install-hooks
+  notes install-hooks --yes
 
   echo -e "---\ntitle: Fresh\n---\n# Fresh content" > "$NOTES_CALLER_PWD/notes/fresh.md"
   git -C "$NOTES_CALLER_PWD" add notes/fresh.md
@@ -672,7 +698,7 @@ EOT
 
 @test "post-commit hook is no-op when files are not obfuscated" {
   # Install hooks — no manifest exists, so hooks should be no-ops
-  notes install-hooks
+  notes install-hooks --yes
 
   # Commit should succeed even though post-commit hook exists
   echo "change" >> "$NOTES_CALLER_PWD/notes/alpha.md"
@@ -762,7 +788,7 @@ EOT
   git -C "$NOTES_CALLER_PWD" add -A
   git -C "$NOTES_CALLER_PWD" commit -q --no-verify -m "obfuscated"
   notes deobfuscate
-  notes install-hooks
+  notes install-hooks --yes
 
   # Edit a file and commit via hooks
   echo "edited" >> "$NOTES_CALLER_PWD/notes/alpha.md"
@@ -802,7 +828,7 @@ EOT
   git -C "$NOTES_CALLER_PWD" commit -q --no-verify -m "obfuscated unsorted manifest"
 
   notes deobfuscate
-  notes install-hooks
+  notes install-hooks --yes
   git -C "$NOTES_CALLER_PWD" add .gitattributes
   git -C "$NOTES_CALLER_PWD" commit -q --no-verify -m "install hook attributes"
   [ -z "$(git -C "$NOTES_CALLER_PWD" status --short)" ]
@@ -819,7 +845,7 @@ EOT
 
 @test "install-hooks installs post-merge deobfuscation hook" {
   notes obfuscate
-  notes install-hooks
+  notes install-hooks --yes
 
   [ -x "$NOTES_CALLER_PWD/.git/hooks/post-merge" ]
   grep -q "Generic hook dispatcher" "$NOTES_CALLER_PWD/.git/hooks/post-merge"
@@ -926,7 +952,7 @@ EOT
   git -C "$NOTES_CALLER_PWD" add -A
   git -C "$NOTES_CALLER_PWD" commit -q --no-verify -m "obfuscated"
   notes deobfuscate
-  notes install-hooks
+  notes install-hooks --yes
   # Working tree: readable names. Index: obfuscated names matching HEAD.
 
   # Edit one file, stage only that one
