@@ -58,6 +58,19 @@ install_obfuscation_hook() {
   chmod +x "$target"
 }
 
+# Install the double-tracking pre-commit guard.
+# Refuses commits while a readable note and its obfuscated counterpart are
+# both tracked in the index. See KnickKnackLabs/notes#51.
+install_double_tracking_hook() {
+  local notes_dir="${1:-notes}"
+  ensure_hook_dispatcher pre-commit
+  # Name sorts after `obfuscation` so the auto-obfuscation hook can fix a
+  # naively-staged readable before this guard runs.
+  local target="$TARGET_DIR/.git/hooks/pre-commit.d/verify-double-tracking"
+  _render_notes_hook_template "$HOOKS_DIR/verify-double-tracking.template" "$notes_dir" > "$target"
+  chmod +x "$target"
+}
+
 # Install the manifest merge driver.
 # Configures git to use our custom merge driver for .manifest files.
 install_manifest_merge_driver() {

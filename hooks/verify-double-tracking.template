@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# Refuse to commit when readable note names are tracked alongside their
+# obfuscated hex counterparts. See KnickKnackLabs/notes#51 — this state
+# silently drifts content on every subsequent commit.
+set -eo pipefail
+
+NOTES_ROOT="__NOTES_DIR__"
+NOTES_TOOL_ROOT="__NOTES_TOOL_ROOT__"
+
+# shellcheck disable=SC1091
+source "$NOTES_TOOL_ROOT/lib/common.sh"
+
+repo_root="$(git rev-parse --show-toplevel)"
+
+double_tracked=""
+if ! double_tracked=$(detect_double_tracked_notes "$repo_root" "$NOTES_ROOT" 2>/dev/null); then
+  double_tracked=""
+fi
+[ -z "$double_tracked" ] && exit 0
+
+echo "ERROR: double-tracked notes detected; refusing to commit." >&2
+echo "Readable names are tracked in git alongside their obfuscated IDs (notes#51):" >&2
+while IFS=$'\t' read -r dt_id dt_relpath; do
+  [ -z "$dt_id" ] && continue
+  echo "  $NOTES_ROOT/$dt_relpath (also tracked as $NOTES_ROOT/$dt_id)" >&2
+done <<< "$double_tracked"
+echo "" >&2
+echo "This causes silent content drift. To fix:" >&2
+echo "  1. Decide which version is correct (readable vs hex)." >&2
+echo "  2. Run: git rm --cached $NOTES_ROOT/<readable>" >&2
+echo "  3. Commit the untrack, then retry your commit." >&2
+exit 1
