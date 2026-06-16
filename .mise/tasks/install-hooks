@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 #MISE description="Install git hooks for obfuscation (pre-commit, post-commit, post-merge)"
+#USAGE flag "-y --yes" default=#false help="Skip confirmation prompt"
 #USAGE flag "--dir <dir>" default="notes" help="Notes directory relative to repo root"
 set -euo pipefail
 
@@ -15,6 +16,8 @@ if ! is_initialized && [ ! -f "$manifest" ]; then
   echo "Run 'notes setup --yes' to initialize notes in this repo."
   exit 0
 fi
+
+confirm_destructive "notes install-hooks will install pre-commit, post-commit, post-merge, post-checkout hooks and a manifest merge driver for $notes_dir/. Continue?"
 
 install_encryption_hook
 install_obfuscation_hook "$notes_dir"

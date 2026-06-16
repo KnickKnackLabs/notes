@@ -1,3 +1,10 @@
 .DS_Store
 __pycache__/
 *.pyc
+
+# Local agent context (not upstream)
+/memory/
+/CLAUDE.md
+AGENTS.md
+.pi/
+.piac/

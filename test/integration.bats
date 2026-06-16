@@ -130,6 +130,94 @@ generate_test_key() {
   [ -z "$(git -C "$TARGET_DIR" diff --cached --name-only)" ]
 }
 
+@test "unlock --force refuses without confirmation for dirty readable overwrite" {
+  notes setup --yes
+
+  local fpr
+  fpr=$(generate_test_key "$GNUPGHOME")
+  notes add-user -- --gpg-key "$fpr"
+
+  # Create, obfuscate, commit, then deobfuscate — unlock without --force is clean
+  mkdir -p "$TARGET_DIR/notes"
+  echo "secret content" > "$TARGET_DIR/notes/secret.md"
+  git -C "$TARGET_DIR" add .
+  git -C "$TARGET_DIR" commit -q --no-verify -m "Add encrypted note"
+
+  run without_confirmation "$TEST_DIR/missing-tty" notes unlock --force
+
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"confirmation required"* ]]
+  [[ "$output" == *"Re-run with --yes"* ]]
+}
+
+@test "unlock --force refuses before running rudi unlock when locked" {
+  local repo fake_bin log
+  repo="$BATS_TEST_TMPDIR/locked-force-repo"
+  fake_bin="$BATS_TEST_TMPDIR/fake-bin"
+  log="$BATS_TEST_TMPDIR/rudi-unlock.log"
+  mkdir -p "$repo/notes" "$repo/.git-crypt" "$fake_bin"
+  git -C "$repo" init -q
+  git -C "$repo" config user.name "Test"
+  git -C "$repo" config user.email "test@test.com"
+  printf 'aaa00001\talpha.md\n' > "$repo/notes/.manifest"
+  printf 'encrypted-ish\n' > "$repo/notes/aaa00001"
+  git -C "$repo" add -A
+  git -C "$repo" commit -q -m "init"
+
+  cat > "$fake_bin/rudi" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+case "${1:-}" in
+  status)
+    if [ "${2:-}" = "--json" ]; then
+      printf '{"initialized":true,"unlocked":false}\n'
+      exit 0
+    fi
+    printf 'locked\n'
+    ;;
+  unlock)
+    : > "${RUDI_UNLOCK_LOG:?RUDI_UNLOCK_LOG not set}"
+    printf 'fake rudi unlock ran\n'
+    ;;
+  *)
+    printf 'fake rudi: unsupported command: %s\n' "$*" >&2
+    exit 1
+    ;;
+esac
+SH
+  chmod +x "$fake_bin/rudi"
+
+  run bash -c '
+    set -euo pipefail
+    export NOTES_CALLER_PWD="$1"
+    export PATH="$2:$PATH"
+    export RUDI_UNLOCK_LOG="$3"
+    without_confirmation "$4" notes unlock --force
+  ' _ "$repo" "$fake_bin" "$log" "$TEST_DIR/missing-tty"
+
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"confirmation required"* ]]
+  [ ! -e "$log" ]
+}
+
+@test "unlock --force --yes proceeds with deobfuscation" {
+  notes setup --yes
+
+  local fpr
+  fpr=$(generate_test_key "$GNUPGHOME")
+  notes add-user -- --gpg-key "$fpr"
+
+  mkdir -p "$TARGET_DIR/notes"
+  echo "secret content" > "$TARGET_DIR/notes/secret.md"
+  git -C "$TARGET_DIR" add .
+  git -C "$TARGET_DIR" commit -q --no-verify -m "Add encrypted note"
+
+  run notes unlock --force --yes
+  [ "$status" -eq 0 ]
+  # Should have deobfuscated (file still readable after unlock)
+  grep -q "secret content" "$TARGET_DIR/notes/secret.md"
+}
+
 # --- status ---
 
 @test "status shows encryption info" {
