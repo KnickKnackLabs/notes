@@ -484,6 +484,35 @@ SH
   [[ "$output" != *"notes/alpha.md"* ]]
 }
 
+@test "notes stage: refuses double-tracked notes (readable + obfuscated both in index)" {
+  local alpha_id
+  alpha_id=$(manifest_id_for_name "$MANIFEST" "alpha.md")
+
+  # Simulate the double-tracking bug from notes#51: both readable and hex tracked.
+  # Use identical content so the dual-present conflict check does not fire first.
+  echo "# Alpha obfuscated" > "$NOTES_CALLER_PWD/notes/alpha.md"
+  echo "# Alpha obfuscated" > "$NOTES_CALLER_PWD/notes/$alpha_id"
+  git -C "$NOTES_CALLER_PWD" add -f "notes/alpha.md"
+
+  run notes stage alpha.md
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"double-tracked"* ]]
+  [[ "$output" == *"alpha.md"* ]]
+  [[ "$output" == *"notes#51"* ]]
+}
+
+@test "notes stage: does not refuse when readable is only on disk, not tracked" {
+  local alpha_id
+  alpha_id=$(manifest_id_for_name "$MANIFEST" "alpha.md")
+
+  # Normal deobfuscated state: readable on disk, hex tracked in index
+  echo "# Alpha v2" > "$NOTES_CALLER_PWD/notes/alpha.md"
+
+  run notes stage alpha.md
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"staged: alpha.md"* ]]
+}
+
 @test "notes stage --all refuses stale readable files left from another branch" {
   local repo="$BATS_TEST_TMPDIR/branch-repo"
   mkdir -p "$repo/notes"
