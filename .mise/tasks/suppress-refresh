@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+#MISE description="Rebuild status suppression for deobfuscated notes (reapply exclude + assume-unchanged)"
+#USAGE flag "--dir <dir>" default="notes" help="Notes directory relative to repo root"
+set -euo pipefail
+
+source "$MISE_CONFIG_ROOT/lib/common.sh"
+source "$MISE_CONFIG_ROOT/lib/obfuscate.sh"
+source "$MISE_CONFIG_ROOT/lib/suppress.sh"
+require_git
+
+notes_dir="${usage_dir:-notes}"
+abs_notes_dir="$(cd "$TARGET_DIR/$notes_dir" 2>/dev/null && pwd)" || {
+  echo "Error: notes directory '$notes_dir' not found in $TARGET_DIR"
+  exit 1
+}
+
+if [ ! -f "$abs_notes_dir/.manifest" ]; then
+  echo "No notes manifest found at $abs_notes_dir/.manifest — nothing to suppress."
+  exit 0
+fi
+
+rebuild_status_suppression "$abs_notes_dir"
+echo "Status suppression rebuilt for $notes_dir/."

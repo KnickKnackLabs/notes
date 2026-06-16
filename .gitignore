@@ -1,3 +1,8 @@
 .DS_Store
 __pycache__/
 *.pyc
+
+# Local pi agent context (not upstream)
+AGENTS.md
+.pi/
+.piac/
