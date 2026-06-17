@@ -51,6 +51,82 @@ require_initialized() {
   fi
 }
 
+# ── Assume-unchanged manifest detection ────────────────────
+
+# Check if notes/.manifest is marked assume-unchanged and if it differs from
+# HEAD. This catches a state where `git pull` would fail because Git sees
+# "local changes" to the manifest, but git status and notes changes both
+# report clean (because assume-unchanged hides the difference).
+#
+# Usage: detect_assume_unchanged_manifest <notes_dir>
+# Returns:
+#   0 — manifest is assume-unchanged and worktree differs from HEAD (needs repair)
+#   1 — manifest is assume-unchanged but worktree matches HEAD (safe to clear)
+#   2 — manifest is NOT assume-unchanged (no problem)
+#   3 — unable to determine (e.g. HEAD has no manifest yet)
+#
+# Side-effect: prints a diagnostic message to stderr when state is 0 or 1.
+# Set NOTES_QUIET_MANIFEST_CHECK=1 to suppress diagnostic output.
+detect_assume_unchanged_manifest() {
+  local notes_dir="${1:?usage: detect_assume_unchanged_manifest <notes_dir>}"
+  local manifest="$TARGET_DIR/$notes_dir/.manifest"
+
+  [ -f "$manifest" ] || return 2
+
+  # Check if assume-unchanged is set
+  local assume_flag
+  assume_flag=$(git -C "$TARGET_DIR" ls-files -v "$notes_dir/.manifest" 2>/dev/null | cut -c1)
+  if [ "$assume_flag" != "h" ]; then
+    return 2  # not assume-unchanged, no problem
+  fi
+
+  # Check if HEAD has the manifest
+  if ! git -C "$TARGET_DIR" cat-file -e "HEAD:$notes_dir/.manifest" 2>/dev/null; then
+    [ -z "${NOTES_QUIET_MANIFEST_CHECK:-}" ] && echo "Warning: $notes_dir/.manifest is assume-unchanged but HEAD has no manifest entry yet." >&2
+    return 3
+  fi
+
+  # Compare worktree to HEAD
+  local worktree_hash head_hash
+  worktree_hash=$(git -C "$TARGET_DIR" hash-object "$manifest" 2>/dev/null) || return 3
+  head_hash=$(git -C "$TARGET_DIR" rev-parse "HEAD:$notes_dir/.manifest" 2>/dev/null) || return 3
+
+  if [ "$worktree_hash" = "$head_hash" ]; then
+    # Worktree matches HEAD — safe to clear assume-unchanged
+    [ -z "${NOTES_QUIET_MANIFEST_CHECK:-}" ] && echo "Warning: $notes_dir/.manifest is assume-unchanged (matches HEAD). Clear with: git update-index --no-assume-unchanged $notes_dir/.manifest" >&2
+    return 1
+  else
+    # Worktree differs from HEAD — need manual repair
+    [ -z "${NOTES_QUIET_MANIFEST_CHECK:-}" ] && echo "Warning: $notes_dir/.manifest is assume-unchanged and DIFFERS from HEAD." >&2
+    [ -z "${NOTES_QUIET_MANIFEST_CHECK:-}" ] && echo "  Clear and stage: git update-index --no-assume-unchanged $notes_dir/.manifest && git add $notes_dir/.manifest" >&2
+    return 0
+  fi
+}
+
+# Clear assume-unchanged on notes/.manifest when it's safe (worktree matches HEAD).
+# Usage: repair_assume_unchanged_manifest <notes_dir>
+# Returns: 0 if cleared, 1 if not needed, 2 if cleared but content differs from HEAD.
+repair_assume_unchanged_manifest() {
+  local notes_dir="${1:?usage: repair_assume_unchanged_manifest <notes_dir>}"
+  local manifest="$TARGET_DIR/$notes_dir/.manifest"
+
+  detect_assume_unchanged_manifest "$notes_dir"
+  local rc=$?
+
+  if [ "$rc" -eq 2 ] || [ "$rc" -eq 3 ]; then
+    return 1  # not needed or can't determine
+  fi
+
+  git -C "$TARGET_DIR" update-index --no-assume-unchanged "$notes_dir/.manifest"
+  echo "Cleared assume-unchanged on $notes_dir/.manifest" >&2
+
+  if [ "$rc" -eq 0 ]; then
+    return 2  # cleared but content differs from HEAD
+  fi
+
+  return 0
+}
+
 # ── Confirmation helpers ─────────────────────────────────────
 
 is_truthy() {

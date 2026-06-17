@@ -1,0 +1,113 @@
+#!/usr/bin/env bash
+#MISE description="Pull latest notes changes (safe git pull wrapper that handles assume-unchanged manifest)"
+#USAGE flag "--yes" default=#false help="Skip confirmation for destructive operations"
+#USAGE flag "--dir <dir>" default="notes" help="Notes directory relative to repo root"
+#USAGE flag "--rebase" default=#false help="Use rebase instead of merge (git pull --rebase)"
+set -euo pipefail
+
+source "$MISE_CONFIG_ROOT/lib/common.sh"
+source "$MISE_CONFIG_ROOT/lib/obfuscate.sh"
+source "$MISE_CONFIG_ROOT/lib/suppress.sh"
+require_git
+
+notes_dir="${usage_dir:-notes}"
+abs_notes_dir="$(cd "$TARGET_DIR/$notes_dir" 2>/dev/null && pwd)" || {
+  echo "Error: notes directory '$notes_dir' not found in $TARGET_DIR" >&2
+  exit 1
+}
+manifest="$abs_notes_dir/.manifest"
+
+# --- Check for assume-unchanged manifest ---
+# git pull can fail when notes/.manifest is assume-unchanged but differs
+# between local HEAD and upstream. Detect this early and repair.
+
+if [ -f "$manifest" ]; then
+  NOTES_QUIET_MANIFEST_CHECK=1 detect_assume_unchanged_manifest "$notes_dir"
+  manifest_rc=$?
+
+  if [ "$manifest_rc" -eq 1 ]; then
+    # Clean case: worktree matches HEAD, safe to clear assume-unchanged
+    echo "Manifest is assume-unchanged but matches HEAD — clearing flag..."
+    git -C "$TARGET_DIR" update-index --no-assume-unchanged "$notes_dir/.manifest"
+    echo "Cleared assume-unchanged on $notes_dir/.manifest"
+  elif [ "$manifest_rc" -eq 0 ]; then
+    # Diverged case: worktree differs from HEAD, needs attention
+    echo "Error: $notes_dir/.manifest is assume-unchanged and DIFFERS from HEAD." >&2
+    echo "  This means the manifest was modified locally but git status" >&2
+    echo "  couldn't see it. Resolve the manifest state first:" >&2
+    echo "" >&2
+    echo "  1. git update-index --no-assume-unchanged $notes_dir/.manifest" >&2
+    echo "  2. git diff $notes_dir/.manifest  # review changes" >&2
+    echo "  3. git add $notes_dir/.manifest && git commit -m \"fix: sync manifest\"" >&2
+    echo "" >&2
+    echo "  Then re-run: notes pull" >&2
+    exit 1
+  fi
+fi
+
+# --- Determine obfuscation state ---
+# We need to know if we're deobfuscated so we can re-apply suppression after pull.
+
+obf_status="unknown"
+if [ -f "$manifest" ]; then
+  first_name=$(head -1 "$manifest" | cut -f2)
+  first_hash=$(head -1 "$manifest" | cut -f1)
+  if [ -n "$first_name" ] && [ -f "$abs_notes_dir/$first_name" ]; then
+    obf_status="deobfuscated"
+  elif [ -n "$first_hash" ] && [ -f "$abs_notes_dir/$first_hash" ]; then
+    obf_status="obfuscated"
+  fi
+fi
+
+# --- Pull ---
+# git pull --ff-only by default, --rebase if requested
+
+cd "$TARGET_DIR"
+
+pull_opts="--ff-only"
+if [ "${usage_rebase:-}" = "true" ]; then
+  pull_opts="--rebase"
+fi
+
+echo "Pulling latest changes..."
+if ! git pull $pull_opts; then
+  rc=$?
+  echo "Error: git pull failed (exit $rc)." >&2
+  if [ -f "$manifest" ]; then
+    echo "  Note: if the error mentions '$notes_dir/.manifest', the manifest may" >&2
+    echo "  have diverged. Run: notes status" >&2
+  fi
+  exit $rc
+fi
+
+# --- Post-pull reconciliation ---
+# After pulling, if we were deobfuscated, reconcile stale readable notes
+# (handles the #85 post-merge stale readable issue) and rebuild suppression.
+
+if [ "$obf_status" = "deobfuscated" ]; then
+  echo "Reconciling notes state after pull..."
+
+  # Reconcile stale readable files from upstream deletions/renames
+  stale_output=$(reconcile_stale_readable_notes "$abs_notes_dir" 2>/dev/null) || true
+  if [ -n "$stale_output" ]; then
+    while IFS=$'\t' read -r action relpath quarantine_path; do
+      [ -n "$action" ] || continue
+      case "$action" in
+        removed)
+          echo "  removed stale readable: $relpath" ;;
+        quarantined)
+          echo "  quarantined stale readable: $relpath -> $quarantine_path" ;;
+      esac
+    done <<< "$stale_output"
+  fi
+
+  # Rebuild status suppression to match the new HEAD state
+  rebuild_status_suppression "$abs_notes_dir" 2>/dev/null || \
+    echo "Warning: failed to rebuild status suppression" >&2
+
+  echo ""
+  echo "Use 'notes changes' to review new/modified notes."
+  echo "Use 'notes status' to check current state."
+fi
+
+echo "Pull complete."

@@ -109,6 +109,16 @@ fi
 
 changes_total=$((changes_modified + changes_new + changes_deleted + changes_stale))
 
+# --- Assume-unchanged manifest check ---
+
+manifest_assume_state=""
+detect_assume_unchanged_manifest "$NOTES_DIR" >/dev/null 2>&1
+manifest_rc=$?
+case "$manifest_rc" in
+  0) manifest_assume_state="diverged" ;;
+  1) manifest_assume_state="clean" ;;
+esac
+
 # --- Output ---
 
 if [ "$JSON" = "true" ]; then
@@ -118,13 +128,15 @@ if [ "$JSON" = "true" ]; then
       --argjson enc_unlocked "$enc_unlocked" \
       --argjson double_tracked "$double_tracked_count" \
       --argjson unmerged_content_conflicts "$unmerged_content_conflict_count" \
+      --arg manifest_assume "$manifest_assume_state" \
       '{
         encryption: { status: $enc, unlocked: $enc_unlocked },
         obfuscation: { status: "unknown", notes: null },
         incomplete_deobfuscation: { conflicts: 0 },
         double_tracked: { conflicts: $double_tracked },
         unmerged_content_conflicts: { conflicts: $unmerged_content_conflicts },
-        changes: null
+        changes: null,
+        manifest_assume_unchanged: $manifest_assume
       }'
   else
     jq -nc \
@@ -140,13 +152,15 @@ if [ "$JSON" = "true" ]; then
       --argjson incomplete_conflicts "$incomplete_conflicts" \
       --argjson double_tracked "$double_tracked_count" \
       --argjson unmerged_content_conflicts "$unmerged_content_conflict_count" \
+      --arg manifest_assume "$manifest_assume_state" \
       '{
         encryption: { status: $enc, unlocked: $enc_unlocked },
         obfuscation: { status: $obf, notes: $total_notes },
         incomplete_deobfuscation: { conflicts: $incomplete_conflicts },
         double_tracked: { conflicts: $double_tracked },
         unmerged_content_conflicts: { conflicts: $unmerged_content_conflicts },
-        changes: { total: $chg_total, modified: $chg_modified, new: $chg_new, deleted: $chg_deleted, stale_readable: $chg_stale }
+        changes: { total: $chg_total, modified: $chg_modified, new: $chg_new, deleted: $chg_deleted, stale_readable: $chg_stale },
+        manifest_assume_unchanged: $manifest_assume
       }'
   fi
 else
@@ -208,5 +222,17 @@ else
     done <<< "$unmerged_content_conflicts"
     echo "Run 'notes conflicts --out <dir>' to write readable base/ours/theirs artifacts."
     echo "See: $NOTES_CONFLICT_RESOLUTION_URL"
+  fi
+
+  # --- Assume-unchanged manifest warnings ---
+  if [ "$manifest_assume_state" = "diverged" ]; then
+    echo ""
+    echo "⚠️  Manifest warning: $NOTES_DIR/.manifest is assume-unchanged and differs from HEAD."
+    echo "   Run: git update-index --no-assume-unchanged $NOTES_DIR/.manifest"
+    echo "   Then: git add $NOTES_DIR/.manifest && git commit -m \"fix: sync manifest\""
+  elif [ "$manifest_assume_state" = "clean" ]; then
+    echo ""
+    echo "ℹ️  Manifest note: $NOTES_DIR/.manifest is assume-unchanged (matches HEAD)."
+    echo "   Clear with: git update-index --no-assume-unchanged $NOTES_DIR/.manifest"
   fi
 fi
