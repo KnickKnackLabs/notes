@@ -20,6 +20,15 @@ notes list
 notes search "workflow"
 notes show project-plan
 
+# Read note body without frontmatter (convention-aware).
+notes read notes/project-plan.md
+
+# Structured JSON with frontmatter/body components.
+notes read notes/project-plan.md --json
+
+# Include frontmatter in the output.
+notes read notes/project-plan.md --with-frontmatter
+
 # Parse convention-aware components without changing raw Markdown reads.
 notes parse notes/project-plan.md
 
@@ -51,6 +60,13 @@ notes changes --summary
 notes list --type skill
 notes search "review capacity" --tag workflow
 notes show project-plan --json
+
+# Read note visible body, strip frontmatter by default.
+notes read project-plan
+notes read project-plan --json
+notes read project-plan --with-frontmatter
+
+# Parse convention-aware components without changing raw Markdown reads.
 notes parse notes/project-plan.md
 
 # Show readable diffs for local changes, refs, or PRs.
@@ -92,6 +108,7 @@ notes unlock
 - **Safe commits/staging** — commits or stages notes despite local exclude/assume-unchanged rules used for readable working copies.
 - **Readable review diffs** — materializes obfuscated note refs/PRs as readable Markdown and emits a normal patch.
 - **Readable conflict artifacts** — detects unmerged encrypted/obfuscated note content and writes base/ours/theirs Markdown files for manual resolution.
+- **Convention-aware reading** — `notes read <file>` returns the visible body without frontmatter by default, with `--json` for structured component output and `--with-frontmatter` to include the YAML header.
 - **Convention-aware parsing** — `notes parse <file>` returns JSON components for frontmatter and body without changing raw Markdown compatibility.
 - **Wikilink graph telemetry** — `notes audit` reports inbound/outbound link counts per note and surfaces broken `[[targets]]`. Generic; layered analyses (e.g. pattern maturity) consume the `--json` output.
 
@@ -101,6 +118,7 @@ notes unlock
 - Prefer `notes commit` for note-only commits. Use `notes stage <path>` or `notes stage --all` only when you need manual Git control; readable note names are intentionally excluded locally.
 - After pulling shared note repos, inspect `notes status` and `notes changes --summary` before committing follow-up changes.
 - `notes unlock` / `notes deobfuscate` reconcile stale readable files left by upstream note deletion or rename. Clean generated stale files are removed; dirty or unproven stale files are moved to `.git/info/notes-stale-readable/` so they cannot be accidentally staged as new notes.
+- `notes read` is the convention-aware read entrypoint: it strips frontmatter by default and returns only the visible Markdown body. Raw file reads (`cat`, `notes show`) remain valid for complete content.
 - `notes parse` is a parser/query foundation for existing Markdown/frontmatter conventions. Raw Markdown reads remain valid; future conventions should settle separately before they become parser output.
 
 ## Development
