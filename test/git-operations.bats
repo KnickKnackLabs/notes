@@ -1,4 +1,5 @@
 #!/usr/bin/env bats
+bats_require_minimum_version 1.5.0
 
 # Tests for git operations (pull, rebase, merge) with obfuscated notes.
 # Each test creates a "remote" bare repo and a "local" clone to simulate
@@ -22,15 +23,15 @@ _use_local_merge_driver() {
 }
 
 # Override default setup — we need a remote + local pair, not a single repo.
-setup() {
+setup_file() {
   source "$REPO_DIR/lib/common.sh"
 
   # Create a bare "remote" repo
-  export REMOTE="$BATS_TEST_TMPDIR/remote.git"
+  export REMOTE="$BATS_FILE_TMPDIR/remote.git"
   git init -q --bare -b main "$REMOTE"
 
   # Create the "origin" working copy (simulates another machine / agent)
-  export ORIGIN="$BATS_TEST_TMPDIR/origin"
+  export ORIGIN="$BATS_FILE_TMPDIR/origin"
   git clone -q "$REMOTE" "$ORIGIN"
   git -C "$ORIGIN" config user.email "test@test.com"
   git -C "$ORIGIN" config user.name "Test"
@@ -53,7 +54,7 @@ setup() {
   git -C "$ORIGIN" push -q
 
   # Clone to "local" (simulates your working copy)
-  export LOCAL="$BATS_TEST_TMPDIR/local"
+  export LOCAL="$BATS_FILE_TMPDIR/local"
   git clone -q "$REMOTE" "$LOCAL"
   git -C "$LOCAL" config user.email "test@test.com"
   git -C "$LOCAL" config user.name "Test"
@@ -354,7 +355,7 @@ setup() {
     skip "git-crypt not installed"
   fi
 
-  local repo="$BATS_TEST_TMPDIR/crypt-rebase"
+  local repo="$BATS_FILE_TMPDIR/crypt-rebase"
   mkdir -p "$repo/notes"
   git -C "$repo" init -q -b main
   git -C "$repo" config user.email "test@test.com"
@@ -402,8 +403,12 @@ EOT
   grep -qF "gamma.md" "$repo/notes/.manifest"
   [ -z "$(git -C "$repo" status --short)" ]
 
-  local merged_plain="$BATS_TEST_TMPDIR/crypt-rebase-merged"
+  local merged_plain="$BATS_FILE_TMPDIR/crypt-rebase-merged"
   git -C "$repo" cat-file -p HEAD:notes/.manifest | (cd "$repo" && git-crypt smudge) > "$merged_plain"
   grep -qF "beta.md" "$merged_plain"
   grep -qF "gamma.md" "$merged_plain"
+}
+
+teardown_file() {
+  rm -rf "$BATS_FILE_TMPDIR"
 }

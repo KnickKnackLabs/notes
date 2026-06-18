@@ -1,9 +1,10 @@
 #!/usr/bin/env bats
+bats_require_minimum_version 1.5.0
 
 load test_helper
 
-setup() {
-  export NOTES_CALLER_PWD="$BATS_TEST_TMPDIR"
+setup_file() {
+  export NOTES_CALLER_PWD="$BATS_FILE_TMPDIR"
   mkdir -p "$NOTES_CALLER_PWD/notes"
 
   # Create test notes
@@ -412,7 +413,7 @@ setup() {
 @test "install-hooks refuses without confirmation in headless context" {
   notes obfuscate
 
-  run without_confirmation "$BATS_TEST_TMPDIR/missing-tty" notes install-hooks
+  run without_confirmation "$BATS_FILE_TMPDIR/missing-tty" notes install-hooks
 
   [ "$status" -eq 2 ]
   [[ "$output" == *"confirmation required"* ]]
@@ -622,7 +623,7 @@ EOF
   git -C "$NOTES_CALLER_PWD" commit -q --no-verify -m "install hook attributes"
 
   local fake_bin
-  fake_bin="$BATS_TEST_TMPDIR/fake-bin"
+  fake_bin="$BATS_FILE_TMPDIR/fake-bin"
   mkdir -p "$fake_bin"
   cat > "$fake_bin/notes" <<'EOT'
 #!/usr/bin/env bash
@@ -960,7 +961,7 @@ EOT
   git -C "$NOTES_CALLER_PWD" add -f notes/alpha.md
 
   # Capture stderr from commit (hooks print rename operations there)
-  local stderr_log="$BATS_TEST_TMPDIR/commit-stderr"
+  local stderr_log="$BATS_FILE_TMPDIR/commit-stderr"
   git -C "$NOTES_CALLER_PWD" commit -m "edit one file" 2>"$stderr_log"
 
   cat "$stderr_log" >&2
@@ -1382,4 +1383,8 @@ EOT
   [ -f "$NOTES_CALLER_PWD/notes/cafebabe" ]
   # And real.md wasn't obfuscated either (fail-fast = no partial state)
   [ -f "$NOTES_CALLER_PWD/notes/real.md" ]
+}
+
+teardown_file() {
+  rm -rf "$BATS_FILE_TMPDIR"
 }
