@@ -21,12 +21,14 @@ confirm_destructive "notes install-hooks will install pre-commit, post-commit, p
 
 install_encryption_hook
 install_obfuscation_hook "$notes_dir"
+install_double_tracking_hook "$notes_dir"
 install_deobfuscation_hook "$notes_dir"
 install_manifest_merge_driver "$notes_dir"
 
 echo "Installed hooks:"
 echo "  pre-commit.d/encryption — rejects plaintext staged encrypted files"
 echo "  pre-commit.d/obfuscation — auto-obfuscates staged readable names"
+echo "  pre-commit.d/verify-double-tracking — refuses commits with double-tracked notes"
 echo "  post-commit.d/deobfuscation — restores readable names after commit"
 echo "  post-merge.d/deobfuscation — restores readable names after pull"
 echo "  post-checkout.d/deobfuscation — reconciles readable names after branch checkout"

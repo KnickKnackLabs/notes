@@ -497,3 +497,75 @@ run_encryption_hook() {
   run_encryption_hook
   [ "$status" -eq 0 ]
 }
+
+# --- double-tracking pre-commit hook (#51) ---
+run_double_tracking_hook() {
+  run bash -c "cd '$TARGET_DIR' && bash .git/hooks/pre-commit.d/verify-double-tracking"
+}
+
+@test "double-tracking hook passes when no manifest exists (#51)" {
+  notes setup --yes
+  # Fresh repo with .manifest absent: nothing to compare against.
+  rm -f "$TARGET_DIR/notes/.manifest"
+
+  run_double_tracking_hook
+  [ "$status" -eq 0 ]
+}
+
+@test "double-tracking hook passes when only obfuscated paths are tracked (#51)" {
+  notes setup --yes
+  printf 'aaaaaaaa\talpha.md\n' > "$TARGET_DIR/notes/.manifest"
+  echo "# Alpha" > "$TARGET_DIR/notes/aaaaaaaa"
+  git -C "$TARGET_DIR" add -A
+  git -C "$TARGET_DIR" commit -q --no-verify -m "init"
+
+  run_double_tracking_hook
+  [ "$status" -eq 0 ]
+}
+
+@test "double-tracking hook blocks commit when readable + obfuscated both tracked (#51)" {
+  notes setup --yes
+  printf 'aaaaaaaa\talpha.md\n' > "$TARGET_DIR/notes/.manifest"
+  echo "# Alpha readable" > "$TARGET_DIR/notes/alpha.md"
+  echo "# Alpha obfuscated" > "$TARGET_DIR/notes/aaaaaaaa"
+  # Force-add the readable past the local exclude rules to simulate the bug.
+  git -C "$TARGET_DIR" add -f notes/alpha.md
+  git -C "$TARGET_DIR" add notes/.manifest notes/aaaaaaaa
+  git -C "$TARGET_DIR" commit -q --no-verify -m "double-tracked baseline"
+
+  run_double_tracking_hook
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"double-tracked"* ]]
+  [[ "$output" == *"notes/alpha.md"* ]]
+  [[ "$output" == *"notes/aaaaaaaa"* ]]
+  [[ "$output" == *"git rm --cached"* ]]
+}
+
+@test "double-tracking hook is installed by setup (#51)" {
+  notes setup --yes
+  [ -x "$TARGET_DIR/.git/hooks/pre-commit.d/verify-double-tracking" ]
+  grep -q "double-tracked notes detected" "$TARGET_DIR/.git/hooks/pre-commit.d/verify-double-tracking"
+}
+
+@test "pre-commit dispatcher lets obfuscation fix staged readable before double-tracking check (#51)" {
+  notes setup --yes
+  local fpr
+  fpr=$(generate_test_key "$GNUPGHOME")
+  notes add-user -- --gpg-key "$fpr"
+
+  mkdir -p "$TARGET_DIR/notes"
+  printf '# Alpha\n' > "$TARGET_DIR/notes/alpha.md"
+  git -C "$TARGET_DIR" add notes/alpha.md
+
+  run git -C "$TARGET_DIR" commit -m "add alpha"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Auto-obfuscating 1 file(s)"* ]]
+  [[ "$output" != *"double-tracked notes detected"* ]]
+
+  local id
+  id=$(awk '$2 == "alpha.md" { print $1 }' "$TARGET_DIR/notes/.manifest")
+  [ -n "$id" ]
+  git -C "$TARGET_DIR" cat-file -e "HEAD:notes/$id"
+  git -C "$TARGET_DIR" cat-file -e "HEAD:notes/.manifest"
+  ! git -C "$TARGET_DIR" cat-file -e "HEAD:notes/alpha.md" 2>/dev/null
+}

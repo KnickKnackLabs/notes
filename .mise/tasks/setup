@@ -124,6 +124,7 @@ fi
 # --- Install hooks ---
 install_encryption_hook
 install_obfuscation_hook "$NOTES_DIR"
+install_double_tracking_hook "$NOTES_DIR"
 install_deobfuscation_hook "$NOTES_DIR"
 install_manifest_merge_driver "$NOTES_DIR"
 echo "  Installed hooks"
