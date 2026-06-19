@@ -546,3 +546,26 @@ run_double_tracking_hook() {
   [ -x "$TARGET_DIR/.git/hooks/pre-commit.d/verify-double-tracking" ]
   grep -q "double-tracked notes detected" "$TARGET_DIR/.git/hooks/pre-commit.d/verify-double-tracking"
 }
+
+@test "pre-commit dispatcher lets obfuscation fix staged readable before double-tracking check (#51)" {
+  notes setup --yes
+  local fpr
+  fpr=$(generate_test_key "$GNUPGHOME")
+  notes add-user -- --gpg-key "$fpr"
+
+  mkdir -p "$TARGET_DIR/notes"
+  printf '# Alpha\n' > "$TARGET_DIR/notes/alpha.md"
+  git -C "$TARGET_DIR" add notes/alpha.md
+
+  run git -C "$TARGET_DIR" commit -m "add alpha"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Auto-obfuscating 1 file(s)"* ]]
+  [[ "$output" != *"double-tracked notes detected"* ]]
+
+  local id
+  id=$(awk '$2 == "alpha.md" { print $1 }' "$TARGET_DIR/notes/.manifest")
+  [ -n "$id" ]
+  git -C "$TARGET_DIR" cat-file -e "HEAD:notes/$id"
+  git -C "$TARGET_DIR" cat-file -e "HEAD:notes/.manifest"
+  ! git -C "$TARGET_DIR" cat-file -e "HEAD:notes/alpha.md" 2>/dev/null
+}
