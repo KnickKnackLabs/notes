@@ -36,6 +36,17 @@ if [ "${usage_summary:-}" = "true" ]; then
 
   if [ -z "$changes" ]; then
     echo "No changes."
+
+    # Check for assume-unchanged manifest that might hide the real state
+    manifest_rc=0
+    NOTES_QUIET_MANIFEST_CHECK=1 detect_assume_unchanged_manifest "$notes_dir" || manifest_rc=$?
+    if [ "$manifest_rc" -eq 0 ]; then
+      echo "Warning: $notes_dir/.manifest is assume-unchanged and differs from HEAD."
+      echo "  git pull may fail. Clear with: git update-index --no-assume-unchanged $notes_dir/.manifest"
+    elif [ "$manifest_rc" -eq 1 ]; then
+      echo "Note: $notes_dir/.manifest is assume-unchanged (matches HEAD)."
+      echo "  Clear with: git update-index --no-assume-unchanged $notes_dir/.manifest"
+    fi
     exit 0
   fi
 
