@@ -90,6 +90,18 @@ COMMON_SRC="source '$REPO_DIR/lib/common.sh'"
   [ "$status" -eq 1 ]
 }
 
+@test "repair handles clean assume-unchanged manifest under set -e" {
+  echo -e "abc12345\talpha.md" > "$TARGET_DIR/notes/.manifest"
+  git -C "$TARGET_DIR" add notes/.manifest
+  git -C "$TARGET_DIR" commit -q -m "init"
+  git -C "$TARGET_DIR" update-index --assume-unchanged notes/.manifest
+
+  run bash -c "set -euo pipefail; ${COMMON_SRC}; TARGET_DIR='$TARGET_DIR'; repair_assume_unchanged_manifest 'notes'"
+  [ "$status" -eq 0 ]
+  flag=$(git -C "$TARGET_DIR" ls-files -v notes/.manifest | cut -c1)
+  [ "$flag" = "H" ]
+}
+
 # --- notes status with assume-unchanged manifest ---
 
 @test "status shows assume-unchanged warning when diverged from HEAD" {
@@ -174,6 +186,32 @@ COMMON_SRC="source '$REPO_DIR/lib/common.sh'"
   echo "$output" | grep -q "assume-unchanged"
 }
 
+@test "changes --summary handles clean assume-unchanged manifest through real task" {
+  echo -e "abc12345\talpha.md" > "$TARGET_DIR/notes/.manifest"
+  echo "alpha" > "$TARGET_DIR/notes/abc12345"
+  git -C "$TARGET_DIR" add notes/.manifest notes/abc12345
+  git -C "$TARGET_DIR" commit -q -m "init"
+  git -C "$TARGET_DIR" update-index --assume-unchanged notes/.manifest
+
+  run notes changes --summary
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -q "No changes"
+  echo "$output" | grep -q "assume-unchanged (matches HEAD)"
+}
+
+@test "status handles clean assume-unchanged manifest through real task" {
+  echo -e "abc12345\talpha.md" > "$TARGET_DIR/notes/.manifest"
+  echo "alpha" > "$TARGET_DIR/notes/abc12345"
+  git -C "$TARGET_DIR" add notes/.manifest notes/abc12345
+  git -C "$TARGET_DIR" commit -q -m "init"
+  git -C "$TARGET_DIR" update-index --assume-unchanged notes/.manifest
+
+  run notes status
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -q "Manifest note"
+  echo "$output" | grep -q "assume-unchanged (matches HEAD)"
+}
+
 # --- notes pull ---
 
 @test "pull clears assume-unchanged before git pull attempt" {
@@ -227,4 +265,37 @@ COMMON_SRC="source '$REPO_DIR/lib/common.sh'"
   "
   [ "$status" -eq 1 ]
   echo "$output" | grep -q "DIFFERS"
+}
+
+@test "pull clears clean assume-unchanged manifest through real task" {
+  local remote
+  remote="$BATS_TEST_TMPDIR/origin.git"
+  git init -q --bare "$remote"
+
+  echo -e "abc12345\talpha.md" > "$TARGET_DIR/notes/.manifest"
+  echo "alpha" > "$TARGET_DIR/notes/abc12345"
+  git -C "$TARGET_DIR" add notes/.manifest notes/abc12345
+  git -C "$TARGET_DIR" commit -q -m "init"
+  git -C "$TARGET_DIR" remote add origin "$remote"
+  git -C "$TARGET_DIR" push -q -u origin HEAD
+  git -C "$TARGET_DIR" update-index --assume-unchanged notes/.manifest
+
+  run notes pull
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -q "Cleared assume-unchanged"
+  echo "$output" | grep -q "Pull complete"
+  flag=$(git -C "$TARGET_DIR" ls-files -v notes/.manifest | cut -c1)
+  [ "$flag" = "H" ]
+}
+
+@test "pull reports the original git pull exit status" {
+  echo -e "abc12345\talpha.md" > "$TARGET_DIR/notes/.manifest"
+  echo "alpha" > "$TARGET_DIR/notes/abc12345"
+  git -C "$TARGET_DIR" add notes/.manifest notes/abc12345
+  git -C "$TARGET_DIR" commit -q -m "init"
+
+  run notes pull
+  [ "$status" -ne 0 ]
+  echo "$output" | grep -q "Error: git pull failed (exit"
+  ! echo "$output" | grep -q "Error: git pull failed (exit 0)"
 }

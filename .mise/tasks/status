@@ -112,8 +112,8 @@ changes_total=$((changes_modified + changes_new + changes_deleted + changes_stal
 # --- Assume-unchanged manifest check ---
 
 manifest_assume_state=""
-detect_assume_unchanged_manifest "$NOTES_DIR" >/dev/null 2>&1
-manifest_rc=$?
+manifest_rc=0
+detect_assume_unchanged_manifest "$NOTES_DIR" >/dev/null 2>&1 || manifest_rc=$?
 case "$manifest_rc" in
   0) manifest_assume_state="diverged" ;;
   1) manifest_assume_state="clean" ;;

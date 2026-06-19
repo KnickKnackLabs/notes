@@ -110,8 +110,8 @@ repair_assume_unchanged_manifest() {
   local notes_dir="${1:?usage: repair_assume_unchanged_manifest <notes_dir>}"
   local manifest="$TARGET_DIR/$notes_dir/.manifest"
 
-  detect_assume_unchanged_manifest "$notes_dir"
-  local rc=$?
+  local rc=0
+  detect_assume_unchanged_manifest "$notes_dir" || rc=$?
 
   if [ "$rc" -eq 2 ] || [ "$rc" -eq 3 ]; then
     return 1  # not needed or can't determine
