@@ -94,13 +94,19 @@ elif not rows:
     suffix = f" with {' '.join(filters)}" if filters else ""
     print(f"No notes found matching: {query}{suffix}")
 else:
+    def _sanitize(val: str) -> str:
+        return str(val).replace("\t", " ").replace("\n", "⏎")
+
     table = "Title\tType\tStatus\tUpdated\tMatches\n" + "\n".join(
-        f"{row['title']}\t{row['type']}\t{row['status']}\t{row['date']}\t{' | '.join(row['matches'][:2])}" for row in rows
+        f"{_sanitize(row['title'])}\t{_sanitize(row['type'])}\t{_sanitize(row['status'])}\t{_sanitize(row['date'])}\t{_sanitize(' | '.join(row['matches'][:2]))}" for row in rows
     )
-    subprocess.run(
-        ["gum", "table", "--print", "--separator", "\t"],
-        input=table,
-        text=True,
-        check=True,
-    )
+    try:
+        subprocess.run(
+            ["gum", "table", "--print", "--separator", "\t"],
+            input=table,
+            text=True,
+            check=True,
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        print(table)
 PY
