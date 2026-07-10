@@ -20,6 +20,19 @@ load test_helper
   echo "$output" | grep -q "OK"
 }
 
+@test "verify-blobs: large encrypted blob passes" {
+  mkdir -p "$NOTES_CALLER_PWD/notes"
+  printf '\x00GITCRYPT\x00aaa00001\talpha.md\n' > "$NOTES_CALLER_PWD/notes/.manifest"
+  printf '\x00GITCRYPT\x00' > "$NOTES_CALLER_PWD/notes/aaa00001"
+  dd if=/dev/zero bs=1024 count=128 2>/dev/null >> "$NOTES_CALLER_PWD/notes/aaa00001"
+  git -C "$NOTES_CALLER_PWD" add -A
+  git -C "$NOTES_CALLER_PWD" commit -q -m "large encrypted blob"
+
+  run notes verify-blobs
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -q "OK"
+}
+
 @test "verify-blobs: plaintext manifest fails" {
   mkdir -p "$NOTES_CALLER_PWD/notes"
   echo -e "aaa00001\talpha.md" > "$NOTES_CALLER_PWD/notes/.manifest"
