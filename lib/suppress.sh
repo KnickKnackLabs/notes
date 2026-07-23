@@ -197,15 +197,22 @@ _rewrite_exclude_block() {
   mv -f "$tmp" "$exclude_file"
 }
 
-# Apply an index flag to newline-delimited paths in one Git process. Managed
-# obfuscated IDs cannot contain newlines, so update-index --stdin is safe here.
-# Filter stale paths first: one missing index entry rejects the entire batch.
+# Apply an index flag to newline-delimited managed paths in one update-index process.
+# Resolve candidates through NUL-delimited Git output so quoted non-ASCII paths
+# stay exact, while missing stale-state paths are omitted from the batch.
 _update_index_paths() {
   local repo_root="${1:?usage: _update_index_paths <repo_root> <flag>}"
   local flag="${2:?usage: _update_index_paths <repo_root> <flag>}"
-  awk 'FILENAME != "-" { indexed[$0]=1; next } indexed[$0]' \
-    <(git -C "$repo_root" ls-files) - |
-    git -C "$repo_root" update-index "$flag" --stdin 2>/dev/null || true
+  local path
+  local paths=()
+
+  while IFS= read -r path; do
+    [ -n "$path" ] && paths+=("$path")
+  done
+  [ ${#paths[@]} -gt 0 ] || return 0
+
+  GIT_LITERAL_PATHSPECS=1 git -C "$repo_root" ls-files -z -- "${paths[@]}" |
+    git -C "$repo_root" update-index "$flag" -z --stdin 2>/dev/null || true
 }
 
 # Set assume-unchanged on obfuscated paths + add exclude entries for readable names.

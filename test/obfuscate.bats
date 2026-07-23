@@ -1119,6 +1119,29 @@ SH
 
   # One batch clears IDs recorded in state and one sets all manifest IDs.
   [ "$(wc -l < "$count_file" | tr -d ' ')" -eq 2 ]
+
+  local id relpath
+  while IFS=$'\t' read -r id relpath; do
+    run git -C "$NOTES_CALLER_PWD" ls-files -v "notes/$id"
+    [[ "$output" == h* ]]
+  done < "$NOTES_CALLER_PWD/notes/.manifest"
+}
+
+@test "deobfuscate suppresses indexed IDs under a non-ASCII notes directory" {
+  local notes_dir="nøtes"
+  mv "$NOTES_CALLER_PWD/notes" "$NOTES_CALLER_PWD/$notes_dir"
+  git -C "$NOTES_CALLER_PWD" add -A
+  git -C "$NOTES_CALLER_PWD" commit -q -m "use non-ASCII notes directory"
+
+  notes obfuscate --dir "$notes_dir"
+  git -C "$NOTES_CALLER_PWD" commit -q -m "obfuscate custom directory"
+  notes deobfuscate --dir "$notes_dir"
+
+  local id relpath
+  while IFS=$'\t' read -r id relpath; do
+    run git -C "$NOTES_CALLER_PWD" ls-files -v "$notes_dir/$id"
+    [[ "$output" == h* ]]
+  done < "$NOTES_CALLER_PWD/$notes_dir/.manifest"
 }
 
 @test "deobfuscate clears stale indexed IDs when state also names missing IDs" {
