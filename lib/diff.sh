@@ -66,6 +66,8 @@ materialize_readable_notes_ref() {
 
   local manifest_ids
   manifest_ids=$(mktemp) || { rm -f "$manifest"; return 1; }
+  # Failure paths may unlink these temp files before returning; open readers stay valid.
+  # shellcheck disable=SC2094
   while IFS=$'\t' read -r id relpath; do
     [ -z "$id" ] && continue
     _guard_manifest_path "id" "$id" || { rm -f "$manifest" "$manifest_ids"; return 1; }

@@ -118,8 +118,8 @@ cut -f2 "$WORK/anc" "$WORK/ours" "$WORK/theirs" 2>/dev/null | sort -u > "$WORK/a
 
 # Merge
 has_conflict=false
-> "$WORK/merged"
-> "$WORK/conflicts"
+: > "$WORK/merged"
+: > "$WORK/conflicts"
 
 while IFS= read -r name; do
   [ -z "$name" ] && continue

@@ -153,6 +153,8 @@ confirm_destructive() {
   fi
 
   if command -v gum >/dev/null 2>&1; then
+    # A terminal device intentionally carries prompt input, output, and errors.
+    # shellcheck disable=SC2094
     if gum confirm "$message" <"$tty_path" >"$tty_path" 2>"$tty_path"; then
       return 0
     fi
