@@ -1090,6 +1090,37 @@ EOT
   [[ "$(cat "$NOTES_CALLER_PWD/notes/alpha.md")" == *"local edit"* ]]
 }
 
+@test "deobfuscate batches full suppression index updates" {
+  notes obfuscate
+  git -C "$NOTES_CALLER_PWD" add -A notes
+  git -C "$NOTES_CALLER_PWD" commit -q -m "obfuscate"
+  notes deobfuscate
+  notes obfuscate
+
+  local mock_bin="$BATS_TEST_TMPDIR/mock-bin"
+  local count_file="$BATS_TEST_TMPDIR/update-index-count"
+  local real_git
+  real_git=$(command -v git)
+  mkdir -p "$mock_bin"
+  cat > "$mock_bin/git" <<'SH'
+#!/usr/bin/env bash
+for arg in "$@"; do
+  if [ "$arg" = "update-index" ]; then
+    printf '.\n' >> "$GIT_UPDATE_INDEX_COUNT"
+    break
+  fi
+done
+exec "$REAL_GIT" "$@"
+SH
+  chmod +x "$mock_bin/git"
+  : > "$count_file"
+
+  PATH="$mock_bin:$PATH" REAL_GIT="$real_git" GIT_UPDATE_INDEX_COUNT="$count_file" notes deobfuscate
+
+  # One batch clears IDs recorded in state and one sets all manifest IDs.
+  [ "$(wc -l < "$count_file" | tr -d ' ')" -eq 2 ]
+}
+
 @test "deobfuscate allows identical readable note copy" {
   notes obfuscate
   local alpha_id
