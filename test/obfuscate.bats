@@ -383,14 +383,17 @@ setup() {
 }
 
 @test "round-trip preserves all content and metadata" {
+  local alpha_before beta_before gamma_before
+  alpha_before=$(git -C "$NOTES_CALLER_PWD" hash-object notes/alpha.md)
+  beta_before=$(git -C "$NOTES_CALLER_PWD" hash-object notes/beta.md)
+  gamma_before=$(git -C "$NOTES_CALLER_PWD" hash-object notes/gamma.txt)
+
   notes obfuscate
   notes deobfuscate
 
-  run farts get title "$NOTES_CALLER_PWD/notes/alpha.md"
-  [ "$output" = "Alpha" ]
-
-  run farts get title "$NOTES_CALLER_PWD/notes/beta.md"
-  [ "$output" = "Beta" ]
+  [ "$(git -C "$NOTES_CALLER_PWD" hash-object notes/alpha.md)" = "$alpha_before" ]
+  [ "$(git -C "$NOTES_CALLER_PWD" hash-object notes/beta.md)" = "$beta_before" ]
+  [ "$(git -C "$NOTES_CALLER_PWD" hash-object notes/gamma.txt)" = "$gamma_before" ]
 }
 
 # --- Pre-commit hook ---
