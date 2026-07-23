@@ -5,6 +5,7 @@ set -euo pipefail
 
 repo_dir="${MISE_CONFIG_ROOT:?MISE_CONFIG_ROOT not set}"
 codebase_command="${CODEBASE_COMMAND:-codebase}"
+readme_command="${README_COMMAND:-readme}"
 gum_command="${GUM_COMMAND:-gum}"
 separator='|'
 failures=0
@@ -33,6 +34,16 @@ fail_check() {
   fi
   failures=$((failures + 1))
 }
+
+if command_available "$readme_command"; then
+  if readme_output=$(cd "$repo_dir" && "$readme_command" build --check 2>&1); then
+    add_row "README" "✓" "README.md matches README.tsx"
+  else
+    fail_check "README" "README.md is stale; run readme build" "$readme_output"
+  fi
+else
+  fail_check "README" "readme command not found; run mise install"
+fi
 
 if command_available "$codebase_command"; then
   if lint_output=$(cd "$repo_dir" && "$codebase_command" lint "$repo_dir" 2>&1); then
