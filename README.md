@@ -110,8 +110,14 @@ gh repo clone KnickKnackLabs/notes
 cd notes
 mise trust
 mise install
+mise run doctor
 mise run test
 ```
+
+`mise run doctor` checks the configured codebase conventions and reports the
+optional clone-local pre-commit hook. See [CONTRIBUTING.md](CONTRIBUTING.md) for
+the repository structure, encryption safety boundaries, and full validation
+workflow.
 
 The test suite is BATS-based. Target a subset with:
 
