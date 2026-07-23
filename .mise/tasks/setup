@@ -105,7 +105,8 @@ if [ ${#missing_patterns[@]} -gt 0 ]; then
       # rudi treats an existing pattern with disabled attributes (for example
       # "notes/** -filter=git-crypt") as already assigned. Append an explicit
       # positive assignment so the requested pattern is actually encrypted.
-      printf '%-40s filter=git-crypt diff=git-crypt\n' "$p" >> "$GITATTRIBUTES"
+      # Fixed width here serializes .gitattributes; it is not a rendered table.
+      printf '%-40s filter=git-crypt diff=git-crypt\n' "$p" >> "$GITATTRIBUTES"  # codebase:ignore
     fi
   done
   echo "  Updated .gitattributes"
