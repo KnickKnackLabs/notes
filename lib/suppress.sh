@@ -199,10 +199,13 @@ _rewrite_exclude_block() {
 
 # Apply an index flag to newline-delimited paths in one Git process. Managed
 # obfuscated IDs cannot contain newlines, so update-index --stdin is safe here.
+# Filter stale paths first: one missing index entry rejects the entire batch.
 _update_index_paths() {
   local repo_root="${1:?usage: _update_index_paths <repo_root> <flag>}"
   local flag="${2:?usage: _update_index_paths <repo_root> <flag>}"
-  git -C "$repo_root" update-index "$flag" --stdin 2>/dev/null || true
+  awk 'FILENAME != "-" { indexed[$0]=1; next } indexed[$0]' \
+    <(git -C "$repo_root" ls-files) - |
+    git -C "$repo_root" update-index "$flag" --stdin 2>/dev/null || true
 }
 
 # Set assume-unchanged on obfuscated paths + add exclude entries for readable names.

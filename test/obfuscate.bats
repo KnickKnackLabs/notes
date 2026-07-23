@@ -1121,6 +1121,29 @@ SH
   [ "$(wc -l < "$count_file" | tr -d ' ')" -eq 2 ]
 }
 
+@test "deobfuscate clears stale indexed IDs when state also names missing IDs" {
+  notes obfuscate
+  git -C "$NOTES_CALLER_PWD" add -A notes
+  git -C "$NOTES_CALLER_PWD" commit -q -m "obfuscate"
+  notes deobfuscate
+
+  local alpha_id state
+  alpha_id=$(grep $'\talpha\.md$' "$NOTES_CALLER_PWD/notes/.manifest" | cut -f1)
+  state="$NOTES_CALLER_PWD/.git/info/notes-obfuscation-state"
+
+  # Simulate an upstream deletion plus an older state row whose ID is no
+  # longer in the index. The stale alpha ID is still indexed and suppressed.
+  grep -v "^${alpha_id}"$'\t' "$NOTES_CALLER_PWD/notes/.manifest" > "$NOTES_CALLER_PWD/notes/.manifest.tmp"
+  mv "$NOTES_CALLER_PWD/notes/.manifest.tmp" "$NOTES_CALLER_PWD/notes/.manifest"
+  printf 'deadbeef\tmissing.md\tmissing-hash\n' >> "$state"
+
+  notes deobfuscate
+
+  run git -C "$NOTES_CALLER_PWD" ls-files -v "notes/$alpha_id"
+  [[ "$output" == H* ]]
+  [ ! -f "$NOTES_CALLER_PWD/notes/alpha.md" ]
+}
+
 @test "deobfuscate allows identical readable note copy" {
   notes obfuscate
   local alpha_id
