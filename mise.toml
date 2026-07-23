@@ -23,4 +23,5 @@ lint = [
   "bats-test-helper",
   "mcr-scope",
   "caller-pwd-contract",
+  "github-actions",
 ]

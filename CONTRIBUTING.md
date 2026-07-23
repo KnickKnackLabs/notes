@@ -9,6 +9,7 @@ simple.
 
 ```text
 notes/
+├── .github/workflows/ # Hosted macOS and Linux validation
 ├── .mise/tasks/       # Public CLI commands and task-local orchestration
 ├── hooks/             # Installed Git hook components and templates
 ├── lib/               # Shared Bash and Python domain logic
@@ -79,5 +80,6 @@ git diff --check
 ```
 
 Use focused tests during iteration and the complete suite once the change shape
-is stable. Notes currently has no release step in ordinary contribution work;
-merging and tagging require separate maintainer authority.
+is stable. Pull requests and main run the same suite and configured lints on
+macOS and Linux. Notes currently has no release step in ordinary contribution
+work; merging and tagging require separate maintainer authority.
