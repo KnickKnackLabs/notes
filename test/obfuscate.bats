@@ -1093,6 +1093,83 @@ EOT
   [[ "$(cat "$NOTES_CALLER_PWD/notes/alpha.md")" == *"local edit"* ]]
 }
 
+@test "deobfuscate batches full suppression index updates" {
+  notes obfuscate
+  git -C "$NOTES_CALLER_PWD" add -A notes
+  git -C "$NOTES_CALLER_PWD" commit -q -m "obfuscate"
+  notes deobfuscate
+  notes obfuscate
+
+  local mock_bin="$BATS_TEST_TMPDIR/mock-bin"
+  local count_file="$BATS_TEST_TMPDIR/update-index-count"
+  local real_git
+  real_git=$(command -v git)
+  mkdir -p "$mock_bin"
+  cat > "$mock_bin/git" <<'SH'
+#!/usr/bin/env bash
+for arg in "$@"; do
+  if [ "$arg" = "update-index" ]; then
+    printf '.\n' >> "$GIT_UPDATE_INDEX_COUNT"
+    break
+  fi
+done
+exec "$REAL_GIT" "$@"
+SH
+  chmod +x "$mock_bin/git"
+  : > "$count_file"
+
+  PATH="$mock_bin:$PATH" REAL_GIT="$real_git" GIT_UPDATE_INDEX_COUNT="$count_file" notes deobfuscate
+
+  # One batch clears IDs recorded in state and one sets all manifest IDs.
+  [ "$(wc -l < "$count_file" | tr -d ' ')" -eq 2 ]
+
+  local id relpath
+  while IFS=$'\t' read -r id relpath; do
+    run git -C "$NOTES_CALLER_PWD" ls-files -v "notes/$id"
+    [[ "$output" == h* ]]
+  done < "$NOTES_CALLER_PWD/notes/.manifest"
+}
+
+@test "deobfuscate suppresses indexed IDs under a non-ASCII notes directory" {
+  local notes_dir="nøtes"
+  mv "$NOTES_CALLER_PWD/notes" "$NOTES_CALLER_PWD/$notes_dir"
+  git -C "$NOTES_CALLER_PWD" add -A
+  git -C "$NOTES_CALLER_PWD" commit -q -m "use non-ASCII notes directory"
+
+  notes obfuscate --dir "$notes_dir"
+  git -C "$NOTES_CALLER_PWD" commit -q -m "obfuscate custom directory"
+  notes deobfuscate --dir "$notes_dir"
+
+  local id relpath
+  while IFS=$'\t' read -r id relpath; do
+    run git -C "$NOTES_CALLER_PWD" ls-files -v "$notes_dir/$id"
+    [[ "$output" == h* ]]
+  done < "$NOTES_CALLER_PWD/$notes_dir/.manifest"
+}
+
+@test "deobfuscate clears stale indexed IDs when state also names missing IDs" {
+  notes obfuscate
+  git -C "$NOTES_CALLER_PWD" add -A notes
+  git -C "$NOTES_CALLER_PWD" commit -q -m "obfuscate"
+  notes deobfuscate
+
+  local alpha_id state
+  alpha_id=$(grep $'\talpha\.md$' "$NOTES_CALLER_PWD/notes/.manifest" | cut -f1)
+  state="$NOTES_CALLER_PWD/.git/info/notes-obfuscation-state"
+
+  # Simulate an upstream deletion plus an older state row whose ID is no
+  # longer in the index. The stale alpha ID is still indexed and suppressed.
+  grep -v "^${alpha_id}"$'\t' "$NOTES_CALLER_PWD/notes/.manifest" > "$NOTES_CALLER_PWD/notes/.manifest.tmp"
+  mv "$NOTES_CALLER_PWD/notes/.manifest.tmp" "$NOTES_CALLER_PWD/notes/.manifest"
+  printf 'deadbeef\tmissing.md\tmissing-hash\n' >> "$state"
+
+  notes deobfuscate
+
+  run git -C "$NOTES_CALLER_PWD" ls-files -v "notes/$alpha_id"
+  [[ "$output" == H* ]]
+  [ ! -f "$NOTES_CALLER_PWD/notes/alpha.md" ]
+}
+
 @test "deobfuscate allows identical readable note copy" {
   notes obfuscate
   local alpha_id

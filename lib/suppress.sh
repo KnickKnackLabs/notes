@@ -197,6 +197,24 @@ _rewrite_exclude_block() {
   mv -f "$tmp" "$exclude_file"
 }
 
+# Apply an index flag to newline-delimited managed paths in one update-index process.
+# Resolve candidates through NUL-delimited Git output so quoted non-ASCII paths
+# stay exact, while missing stale-state paths are omitted from the batch.
+_update_index_paths() {
+  local repo_root="${1:?usage: _update_index_paths <repo_root> <flag>}"
+  local flag="${2:?usage: _update_index_paths <repo_root> <flag>}"
+  local path
+  local paths=()
+
+  while IFS= read -r path; do
+    [ -n "$path" ] && paths+=("$path")
+  done
+  [ ${#paths[@]} -gt 0 ] || return 0
+
+  GIT_LITERAL_PATHSPECS=1 git -C "$repo_root" ls-files -z -- "${paths[@]}" |
+    git -C "$repo_root" update-index "$flag" -z --stdin 2>/dev/null || true
+}
+
 # Set assume-unchanged on obfuscated paths + add exclude entries for readable names.
 # Call after deobfuscating.
 # Usage: set_status_suppression <abs_notes_dir> [id...]
@@ -213,16 +231,12 @@ set_status_suppression() {
   local repo_root="$RESOLVED_REPO_ROOT"
   local notes_dir="$RESOLVED_NOTES_DIR"
 
-  # Set assume-unchanged flags
+  # Set assume-unchanged flags in one index update.
   if [ ${#scoped_ids[@]} -gt 0 ] && [ -n "${scoped_ids[0]}" ]; then
-    for id in "${scoped_ids[@]}"; do
-      git -C "$repo_root" update-index --assume-unchanged "$notes_dir/$id" 2>/dev/null || true
-    done
+    printf '%s\n' "${scoped_ids[@]/#/$notes_dir/}" | _update_index_paths "$repo_root" --assume-unchanged
   else
-    while IFS=$'\t' read -r id relpath; do
-      [ -z "$id" ] && continue
-      git -C "$repo_root" update-index --assume-unchanged "$notes_dir/$id" 2>/dev/null || true
-    done < "$manifest"
+    awk -F '\t' -v prefix="$notes_dir/" '$1 != "" { print prefix $1 }' "$manifest" |
+      _update_index_paths "$repo_root" --assume-unchanged
   fi
 
   # Add exclude entries for readable names
@@ -245,16 +259,12 @@ clear_status_suppression() {
   local repo_root="$RESOLVED_REPO_ROOT"
   local notes_dir="$RESOLVED_NOTES_DIR"
 
-  # Clear assume-unchanged flags
+  # Clear assume-unchanged flags in one index update.
   if [ ${#scoped_ids[@]} -gt 0 ] && [ -n "${scoped_ids[0]}" ]; then
-    for id in "${scoped_ids[@]}"; do
-      git -C "$repo_root" update-index --no-assume-unchanged "$notes_dir/$id" 2>/dev/null || true
-    done
+    printf '%s\n' "${scoped_ids[@]/#/$notes_dir/}" | _update_index_paths "$repo_root" --no-assume-unchanged
   else
-    while IFS=$'\t' read -r id relpath; do
-      [ -z "$id" ] && continue
-      git -C "$repo_root" update-index --no-assume-unchanged "$notes_dir/$id" 2>/dev/null || true
-    done < "$manifest"
+    awk -F '\t' -v prefix="$notes_dir/" '$1 != "" { print prefix $1 }' "$manifest" |
+      _update_index_paths "$repo_root" --no-assume-unchanged
   fi
 
   # Remove exclude entries for readable names
@@ -468,10 +478,8 @@ rebuild_status_suppression() {
     state=$(_deobfuscation_state_file "$abs_notes_dir" 2>/dev/null || true)
   fi
   if [ -n "$state" ] && [ -f "$state" ]; then
-    while IFS= read -r id; do
-      [ -n "$id" ] || continue
-      git -C "$repo_root" update-index --no-assume-unchanged "$notes_dir/$id" 2>/dev/null || true
-    done < <(awk -F '\t' '$1 != "" { print $1 }' "$state" | sort -u)
+    awk -F '\t' -v prefix="$notes_dir/" '$1 != "" { print prefix $1 }' "$state" | sort -u |
+      _update_index_paths "$repo_root" --no-assume-unchanged
   fi
 
   mkdir -p "$(dirname "$exclude_file")"
