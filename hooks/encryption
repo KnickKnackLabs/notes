@@ -31,7 +31,11 @@ done < <(git check-attr --cached -z filter -- "${staged[@]}")
 # Flag any that are currently plaintext (e.g. git-crypt locked at stage time).
 bad_files=()
 for file in "${encrypted_staged[@]}"; do
-  if { git-crypt status -- "$file" 2>&1 || true; } | grep -qi "not encrypted"; then
+  status_output=""
+  if ! status_output=$(git-crypt status -- "$file" 2>&1); then
+    : # git-crypt reports plaintext paths through output and a non-zero status.
+  fi
+  if grep -qi "not encrypted" <<< "$status_output"; then
     bad_files+=("$file")
   fi
 done

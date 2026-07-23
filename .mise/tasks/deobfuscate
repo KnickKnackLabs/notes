@@ -84,7 +84,7 @@ if [ -n "$output" ]; then
     [ -z "$id" ] && continue
     echo "  $id → $relpath"
     suppressed_ids+=("$id")
-    ((restored++)) || true
+    restored=$((restored + 1))
   done <<< "$output"
 fi
 
@@ -96,11 +96,11 @@ if [ -n "$stale_output" ]; then
     case "$action" in
       removed)
         echo "  removed stale readable: $relpath" >&2
-        ((removed_stale++)) || true
+        removed_stale=$((removed_stale + 1))
         ;;
       quarantined)
         echo "Warning: quarantined stale readable note: $relpath → $quarantine_path" >&2
-        ((quarantined_stale++)) || true
+        quarantined_stale=$((quarantined_stale + 1))
         ;;
     esac
   done <<< "$stale_output"

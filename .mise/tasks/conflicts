@@ -21,7 +21,9 @@ if [ -z "$records" ]; then
   exit 0
 fi
 
-record_count=$(printf '%s\n' "$records" | grep -c . || true)
+if ! record_count=$(printf '%s\n' "$records" | grep -c .); then
+  record_count=0
+fi
 
 if [ -n "$out_arg" ]; then
   out_dir="$out_arg"

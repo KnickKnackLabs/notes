@@ -71,10 +71,10 @@ _notes_conflict_lookup_readable_name() {
   # Prefer the current index entry when present, then ours/theirs/base for a
   # conflicted manifest. This is enough to map stable obfuscated IDs while
   # still refusing ambiguous or unproven mappings.
-  _notes_conflict_manifest_stage_to_file "$repo_root" "$notes_dir" 0 "$candidates" || true
-  _notes_conflict_manifest_stage_to_file "$repo_root" "$notes_dir" 2 "$candidates" || true
-  _notes_conflict_manifest_stage_to_file "$repo_root" "$notes_dir" 3 "$candidates" || true
-  _notes_conflict_manifest_stage_to_file "$repo_root" "$notes_dir" 1 "$candidates" || true
+  if ! _notes_conflict_manifest_stage_to_file "$repo_root" "$notes_dir" 0 "$candidates"; then :; fi
+  if ! _notes_conflict_manifest_stage_to_file "$repo_root" "$notes_dir" 2 "$candidates"; then :; fi
+  if ! _notes_conflict_manifest_stage_to_file "$repo_root" "$notes_dir" 3 "$candidates"; then :; fi
+  if ! _notes_conflict_manifest_stage_to_file "$repo_root" "$notes_dir" 1 "$candidates"; then :; fi
 
   while IFS=$'\t' read -r entry_id entry_name _extra; do
     [ "$entry_id" = "$id" ] || continue
@@ -89,7 +89,9 @@ _notes_conflict_lookup_readable_name() {
   sorted_matches=$(mktemp) || { rm -f "$candidates" "$matches"; return 1; }
   sort -u "$matches" > "$sorted_matches"
   mv -f "$sorted_matches" "$matches"
-  count=$(grep -c . "$matches" 2>/dev/null || true)
+  if ! count=$(grep -c . "$matches" 2>/dev/null); then
+    count=0
+  fi
   case "$count" in
     0)
       rm -f "$candidates" "$matches"
@@ -127,7 +129,11 @@ notes_conflict_unmerged_paths() {
         printf '%s\n' "$git_path" >> "$tmp"
         ;;
     esac
-  done < <(git -C "$repo_root" ls-files -u -- "$notes_dir" 2>/dev/null || true)
+  done < <(
+    if ! git -C "$repo_root" ls-files -u -- "$notes_dir" 2>/dev/null; then
+      :
+    fi
+  )
 
   sort -u "$tmp"
   rm -f "$tmp"

@@ -177,7 +177,9 @@ verify_commit_touched_only_notes() {
 
 verify_selected_changes_clean() {
   local remaining bad_selected=() status relpath
-  remaining=$(detect_changes "$abs_notes_dir") || true
+  if ! remaining=$(detect_changes "$abs_notes_dir"); then
+    remaining=""
+  fi
 
   if [ -z "$remaining" ]; then
     echo "Notes changes: clean."

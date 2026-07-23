@@ -1093,6 +1093,37 @@ EOT
   [[ "$(cat "$NOTES_CALLER_PWD/notes/alpha.md")" == *"local edit"* ]]
 }
 
+@test "deobfuscate reports suppression index failures" {
+  notes obfuscate
+  git -C "$NOTES_CALLER_PWD" add -A notes
+  git -C "$NOTES_CALLER_PWD" commit -q -m "obfuscate"
+
+  local mock_bin="$BATS_TEST_TMPDIR/failing-index-bin"
+  local real_git
+  real_git=$(command -v git)
+  mkdir -p "$mock_bin"
+  cat > "$mock_bin/git" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$GIT_MOCK_LOG"
+for arg in "$@"; do
+  if [ "$arg" = "update-index" ]; then
+    exit 73
+  fi
+done
+exec "$REAL_GIT" "$@"
+SH
+  chmod +x "$mock_bin/git"
+
+  export PATH="$mock_bin:$PATH"
+  export REAL_GIT="$real_git"
+  export GIT_MOCK_LOG="$BATS_TEST_TMPDIR/git-mock.log"
+  run notes deobfuscate
+
+  grep -Fq "update-index" "$GIT_MOCK_LOG"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Warning: failed to rebuild status suppression"* ]]
+}
+
 @test "deobfuscate batches full suppression index updates" {
   notes obfuscate
   git -C "$NOTES_CALLER_PWD" add -A notes

@@ -73,7 +73,9 @@ rename_to_obfuscated() {
       refuse_if_hex_basename "$relpath" || return 1
 
       local existing_id
-      existing_id=$(manifest_id_for_name "$manifest" "$relpath" || true)
+      if ! existing_id=$(manifest_id_for_name "$manifest" "$relpath"); then
+        existing_id=""
+      fi
       if [ -n "$existing_id" ]; then
         to_restore+=("$relpath")
       else
@@ -95,7 +97,9 @@ rename_to_obfuscated() {
       refuse_if_hex_basename "$relpath" || return 1
 
       local existing_id
-      existing_id=$(manifest_id_for_name "$manifest" "$relpath" || true)
+      if ! existing_id=$(manifest_id_for_name "$manifest" "$relpath"); then
+        existing_id=""
+      fi
       if [ -n "$existing_id" ]; then
         to_restore+=("$relpath")
       else
@@ -115,7 +119,9 @@ rename_to_obfuscated() {
   # Restore files to their known IDs
   for relpath in ${to_restore[@]+"${to_restore[@]}"}; do
     local id
-    id=$(manifest_id_for_name "$manifest" "$relpath" || true)
+    if ! id=$(manifest_id_for_name "$manifest" "$relpath"); then
+      id=""
+    fi
     if ! mv "$notes_dir/$relpath" "$notes_dir/$id"; then
       echo "Error: failed to rename $relpath → $id" >&2
       rm -f "$new_entries"
@@ -143,8 +149,10 @@ rename_to_obfuscated() {
     printf '%s\t%s\n' "$relpath" "$id"
   done
 
-  # Clean up empty directories after flattening
-  find "$notes_dir" -mindepth 1 -type d -empty -delete 2>/dev/null || true
+  # Empty-directory cleanup is cosmetic and must not invalidate completed renames.
+  if ! find "$notes_dir" -mindepth 1 -type d -empty -delete 2>/dev/null; then
+    :
+  fi
 
   # Scoped re-obfuscation of existing manifest entries should not rewrite the
   # manifest at all. Re-sorting a valid but differently-ordered manifest creates
@@ -283,7 +291,9 @@ _rename_one_to_readable() {
   if [ -e "$notes_dir/$relpath" ] && ! cmp -s "$notes_dir/$id" "$notes_dir/$relpath"; then
     local current_hash base_hash state_file dirty_readable=false
     state_file=$(_deobfuscation_state_file "$notes_dir" 2>/dev/null) || state_file=""
-    current_hash=$(git -C "$notes_dir" hash-object -- "$notes_dir/$relpath" 2>/dev/null || true)
+    if ! current_hash=$(git -C "$notes_dir" hash-object -- "$notes_dir/$relpath" 2>/dev/null); then
+      current_hash=""
+    fi
     base_hash=$(_deobfuscation_base_hash_for_id "$notes_dir" "$id")
 
     # No state file (fresh clone or pre-safety upgrade) -> trust the readable
@@ -338,8 +348,8 @@ rename_to_readable() {
       local _rc
       _rename_one_to_readable "$notes_dir" "$manifest" "$id" && _rc=0 || _rc=$?
       case $_rc in
-        0) ((count++)) || true ;;
-        3) ((dirty_count++)) || true ;;
+        0) count=$((count + 1)) ;;
+        3) dirty_count=$((dirty_count + 1)) ;;
         1) return 1 ;;
       esac
     done
@@ -349,8 +359,8 @@ rename_to_readable() {
       local _rc
       _rename_one_to_readable "$notes_dir" "$manifest" "$id" && _rc=0 || _rc=$?
       case $_rc in
-        0) ((count++)) || true ;;
-        3) ((dirty_count++)) || true ;;
+        0) count=$((count + 1)) ;;
+        3) dirty_count=$((dirty_count + 1)) ;;
         1) return 1 ;;
       esac
     done < "$manifest"

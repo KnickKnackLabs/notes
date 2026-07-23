@@ -59,8 +59,10 @@ scope_matches() {
   return 1
 }
 
-# Detect changes
-changes=$(detect_changes "$abs_notes_dir") || true
+# Detect changes. An unavailable manifest is a clean result.
+if ! changes=$(detect_changes "$abs_notes_dir"); then
+  changes=""
+fi
 
 if [ "$scope_all" != "true" ]; then
   unknown=()
@@ -109,7 +111,9 @@ if [ ${#stale_notes[@]} -gt 0 ]; then
   exit 1
 fi
 
-conflicting_notes=$(detect_dual_present_conflicts "$abs_notes_dir") || true
+if ! conflicting_notes=$(detect_dual_present_conflicts "$abs_notes_dir"); then
+  conflicting_notes=""
+fi
 if [ -n "$conflicting_notes" ]; then
   blocked_conflicts=()
   while IFS=$'\t' read -r conflict_id conflict_relpath; do
@@ -228,7 +232,7 @@ for relpath in ${to_stage[@]+"${to_stage[@]}"}; do
       echo "  staged (delete): $relpath"
     fi
   fi
-  ((staged++)) || true
+  staged=$((staged + 1))
 done
 
 echo ""
