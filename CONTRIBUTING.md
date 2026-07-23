@@ -13,6 +13,7 @@ notes/
 ├── .mise/tasks/       # Public CLI commands and task-local orchestration
 ├── hooks/             # Installed Git hook components and templates
 ├── lib/               # Shared Bash and Python domain logic
+├── libexec/test       # Canonical mixed BATS/Python test workflow
 ├── test/              # BATS behavior and integration tests
 ├── test/python/       # Focused Python tests
 ├── mise.toml          # Tools, settings, and convention lint configuration
@@ -49,7 +50,13 @@ mise run test                       # BATS and Python suites
 mise run test changes               # test/changes.bats and matching Python test, if present
 mise run test --filter suppression  # filter BATS test names
 mise run test test/python/test_audit.py
+mise run test --jobs 1              # serial BATS debugging
 ```
+
+The public test task only translates Usage arguments. `libexec/test` owns target
+classification and execution, while `test/setup_suite.bash` establishes the
+repo-local tool environment and deterministic fixture Git identity once per
+BATS invocation.
 
 Notes intentionally uses eight BATS workers, including within-file
 parallelism. Several suites contain many independent Git fixtures, so the
