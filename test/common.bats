@@ -61,6 +61,16 @@ EOF
   [[ "$output" != *"Stale Repo"* ]]
 }
 
+@test "test harness supplies deterministic Git identity without ambient config" {
+  run git config --get user.name
+  [ "$status" -eq 0 ]
+  [ "$output" = "Notes tests" ]
+
+  run git config --get user.email
+  [ "$status" -eq 0 ]
+  [ "$output" = "notes-tests@example.invalid" ]
+}
+
 # ── Confirmation helpers ─────────────────────────────────────
 
 @test "confirm_destructive accepts --yes flag" {

@@ -19,22 +19,30 @@ setup() {
 @test "new sets tags and dates" {
   notes new -- --slug beta --title "Beta" --tags "a, b" --created "2026-01-01" --updated "2026-03-20"
 
-  run farts get tags "$NOTES_CALLER_PWD/notes/beta.md"
-  [ "${lines[0]}" = "a" ]
-  [ "${lines[1]}" = "b" ]
+  run notes parse beta
+  [ "$status" -eq 0 ]
+  PARSED_NOTE="$output" python3 - <<'PY'
+import json
+import os
 
-  run farts get created "$NOTES_CALLER_PWD/notes/beta.md"
-  [ "$output" = "2026-01-01" ]
-
-  run farts get updated "$NOTES_CALLER_PWD/notes/beta.md"
-  [ "$output" = "2026-03-20" ]
+frontmatter = json.loads(os.environ["PARSED_NOTE"])["frontmatter"]
+assert frontmatter["tags"] == ["a", "b"]
+assert frontmatter["created"] == "2026-01-01"
+assert frontmatter["updated"] == "2026-03-20"
+PY
 }
 
 @test "new appends body text" {
   notes new -- --slug with-body --title "Body Note" --body "Some content here."
 
-  run farts body "$NOTES_CALLER_PWD/notes/with-body.md"
-  [[ "$output" == *"Some content here."* ]]
+  run notes parse with-body
+  [ "$status" -eq 0 ]
+  PARSED_NOTE="$output" python3 - <<'PY'
+import json
+import os
+
+assert "Some content here." in json.loads(os.environ["PARSED_NOTE"])["body"]
+PY
 }
 
 @test "new fails if note already exists" {
@@ -49,6 +57,12 @@ setup() {
   notes new -- --slug today-note --title "Today"
   today=$(date +%Y-%m-%d)
 
-  run farts get created "$NOTES_CALLER_PWD/notes/today-note.md"
-  [ "$output" = "$today" ]
+  run notes parse today-note
+  [ "$status" -eq 0 ]
+  PARSED_NOTE="$output" TODAY="$today" python3 - <<'PY'
+import json
+import os
+
+assert json.loads(os.environ["PARSED_NOTE"])["frontmatter"]["created"] == os.environ["TODAY"]
+PY
 }

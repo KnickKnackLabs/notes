@@ -8,11 +8,9 @@ export REPO_DIR
 eval "$(cd "$REPO_DIR" && mise env)"
 
 # Agent sessions inject command-scope git config so real workspace commits are
-# signed. That command-scope config outranks a throwaway test repo's local
-# `commit.gpgsign=false`, so integration tests can fail when the agent's signing
-# key is unavailable. Tests should exercise git behavior, not the launcher's
-# ambient signing policy; keep commits/tags unsigned while preserving normal
-# global/local user identity resolution.
+# signed, while clean CI has no author identity at all. Tests should exercise
+# Git behavior without depending on either ambient state. Give every fixture a
+# deterministic unsigned identity at the same command scope.
 _disable_git_signing_for_tests() {
   local name _value
   unset GIT_CONFIG_COUNT GIT_CONFIG_PARAMETERS
@@ -22,11 +20,15 @@ _disable_git_signing_for_tests() {
     esac
   done < <(env)
 
-  export GIT_CONFIG_COUNT=2
+  export GIT_CONFIG_COUNT=4
   export GIT_CONFIG_KEY_0=commit.gpgsign
   export GIT_CONFIG_VALUE_0=false
   export GIT_CONFIG_KEY_1=tag.gpgsign
   export GIT_CONFIG_VALUE_1=false
+  export GIT_CONFIG_KEY_2=user.name
+  export GIT_CONFIG_VALUE_2="Notes tests"
+  export GIT_CONFIG_KEY_3=user.email
+  export GIT_CONFIG_VALUE_3=notes-tests@example.invalid
 }
 _disable_git_signing_for_tests
 

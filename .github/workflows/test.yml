@@ -1,0 +1,54 @@
+name: Test
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  GH_TOKEN: ${{ github.token }}
+  GITHUB_TOKEN: ${{ github.token }}
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Resolve mise cache epoch
+        id: mise-cache-epoch
+        run: echo "value=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+
+      - name: Set up mise
+        uses: jdx/mise-action@v4
+        with:
+          install: true
+          cache: true
+          # Bound floating tool and plugin staleness while preserving warm runs.
+          cache_key: mise-v2-${{ steps.mise-cache-epoch.outputs.value }}-{{platform}}-{{file_hash}}
+        env:
+          # Serialize installation without changing test and lint behavior.
+          MISE_JOBS: 1
+
+      - name: Install git-crypt
+        run: rudi install
+
+      - name: Check whitespace
+        # A clean checkout has no working-tree diff. Compare the complete tree
+        # with Git's empty tree so committed whitespace errors still fail CI.
+        run: git diff --check "$(git hash-object -t tree /dev/null)" HEAD --
+
+      - name: Run tests
+        run: mise run test
+
+      - name: Run codebase lints
+        run: codebase lint "$PWD"
