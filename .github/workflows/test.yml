@@ -43,7 +43,9 @@ jobs:
         run: rudi install
 
       - name: Check whitespace
-        run: git diff --check
+        # A clean checkout has no working-tree diff. Compare the complete tree
+        # with Git's empty tree so committed whitespace errors still fail CI.
+        run: git diff --check "$(git hash-object -t tree /dev/null)" HEAD --
 
       - name: Run tests
         run: mise run test

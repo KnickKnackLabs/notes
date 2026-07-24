@@ -498,6 +498,32 @@ run_encryption_hook() {
   [ "$status" -eq 0 ]
 }
 
+@test "encryption hook fails closed when git-crypt cannot inspect a staged path (#49)" {
+  notes setup --yes
+  local fpr
+  fpr=$(generate_test_key "$GNUPGHOME")
+  notes add-user -- --gpg-key "$fpr"
+
+  mkdir -p "$TARGET_DIR/notes"
+  echo "secret" > "$TARGET_DIR/notes/ok.md"
+  git -C "$TARGET_DIR" add notes/ok.md
+
+  local mock_bin="$BATS_TEST_TMPDIR/mock-git-crypt-bin"
+  mkdir -p "$mock_bin"
+  cat > "$mock_bin/git-crypt" <<'SH'
+#!/usr/bin/env bash
+echo "backend inspection failed" >&2
+exit 73
+SH
+  chmod +x "$mock_bin/git-crypt"
+  export PATH="$mock_bin:$PATH"
+
+  run_encryption_hook
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"could not inspect staged encrypted path: notes/ok.md"* ]]
+  [[ "$output" == *"backend inspection failed"* ]]
+}
+
 # --- double-tracking pre-commit hook (#51) ---
 run_double_tracking_hook() {
   run bash -c "cd '$TARGET_DIR' && bash .git/hooks/pre-commit.d/verify-double-tracking"
