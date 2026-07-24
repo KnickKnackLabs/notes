@@ -362,11 +362,12 @@ _record_deobfuscation_base_hashes() {
 # Returns: 0=renamed, 2=skipped (not found/no match),
 #          3=dirty readable preserved, 1=error (mv failed).
 _rename_one_to_readable() {
-  local notes_dir="$1" manifest="$2" id="$3"
-  local relpath
-  relpath=$(manifest_name_for_id "$manifest" "$id")
-  [ -z "$relpath" ] && return 2
+  local notes_dir="$1" manifest="$2" id="$3" relpath="${4:-}"
   [ ! -f "$notes_dir/$id" ] && return 2
+  if [ -z "$relpath" ]; then
+    relpath=$(manifest_name_for_id "$manifest" "$id")
+    [ -z "$relpath" ] && return 2
+  fi
 
   local target_dir
   target_dir=$(dirname "$notes_dir/$relpath")
@@ -451,7 +452,7 @@ rename_to_readable() {
     while IFS=$'\t' read -r id relpath; do
       [ -z "$id" ] && continue
       local _rc
-      _rename_one_to_readable "$notes_dir" "$manifest" "$id" && _rc=0 || _rc=$?
+      _rename_one_to_readable "$notes_dir" "$manifest" "$id" "$relpath" && _rc=0 || _rc=$?
       case $_rc in
         0) count=$((count + 1)) ;;
         3) dirty_count=$((dirty_count + 1)) ;;

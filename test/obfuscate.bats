@@ -322,6 +322,43 @@ setup() {
   [ -f "$NOTES_CALLER_PWD/notes/gamma.txt" ]
 }
 
+@test "full deobfuscation skips manifest lookup processes for absent IDs" {
+  local i=1 id name restored_id="" counter_bin command real_command
+  rm -rf "$NOTES_CALLER_PWD/notes"
+  mkdir -p "$NOTES_CALLER_PWD/notes"
+
+  while [ "$i" -le 42 ]; do
+    id=$(printf '%08d' "$i")
+    name=$(printf 'note-%02d.md' "$i")
+    printf '%s\t%s\n' "$id" "$name" >> "$NOTES_CALLER_PWD/notes/.manifest"
+    if [ "$i" -eq 17 ]; then
+      restored_id="$id"
+      printf '# Restored\n' > "$NOTES_CALLER_PWD/notes/$id"
+    fi
+    i=$((i + 1))
+  done
+
+  counter_bin="$BATS_TEST_TMPDIR/lookup-counter-bin"
+  mkdir -p "$counter_bin"
+  for command in grep cut; do
+    real_command=$(command -v "$command")
+    cat > "$counter_bin/$command" <<SH
+#!/usr/bin/env bash
+printf '1\\n' >> '$BATS_TEST_TMPDIR/$command.calls'
+exec '$real_command' "\$@"
+SH
+    chmod +x "$counter_bin/$command"
+  done
+
+  PATH="$counter_bin:$PATH" run rename_to_readable "$NOTES_CALLER_PWD/notes"
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"$restored_id"*$'\t'"note-17.md"* ]]
+  [ -f "$NOTES_CALLER_PWD/notes/note-17.md" ]
+  [ ! -e "$BATS_TEST_TMPDIR/grep.calls" ]
+  [ ! -e "$BATS_TEST_TMPDIR/cut.calls" ]
+}
+
 @test "deobfuscate preserves manifest for stable IDs" {
   notes obfuscate
   notes deobfuscate

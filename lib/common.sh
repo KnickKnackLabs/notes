@@ -236,13 +236,20 @@ detect_double_tracked_notes() {
   local repo_root="${1:?usage: detect_double_tracked_notes <repo_root> <notes_dir_rel>}"
   local notes_dir_rel="${2:?usage: detect_double_tracked_notes <repo_root> <notes_dir_rel>}"
   local manifest="$repo_root/$notes_dir_rel/.manifest"
+  local tracked_paths rc
   [ ! -f "$manifest" ] && return 0
 
-  while IFS=$'\t' read -r id relpath; do
-    [ -z "$id" ] && continue
-    # If the readable path is tracked in git's index, it's double-tracked.
-    if git -C "$repo_root" ls-files --error-unmatch -- "$notes_dir_rel/$relpath" >/dev/null 2>&1; then
-      printf '%s\t%s\n' "$id" "$relpath"
-    fi
-  done < "$manifest"
+  tracked_paths=$(mktemp) || return 1
+  if ! git -C "$repo_root" -c core.quotePath=false ls-files -- "$notes_dir_rel" > "$tracked_paths"; then
+    rm -f "$tracked_paths"
+    return 1
+  fi
+
+  awk -F '\t' -v tracked_file="$tracked_paths" -v prefix="$notes_dir_rel/" '
+    FILENAME == tracked_file { tracked[$0] = 1; next }
+    $1 != "" && ((prefix $2) in tracked) { print $1 "\t" $2 }
+  ' "$tracked_paths" "$manifest"
+  rc=$?
+  rm -f "$tracked_paths"
+  return "$rc"
 }

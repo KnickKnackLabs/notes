@@ -173,3 +173,37 @@ EOF
   [ "$status" -eq 0 ]
   [ -z "$output" ]
 }
+
+@test "detect_double_tracked_notes inspects tracked paths in one Git process" {
+  local i=1 id name real_git counter_bin calls
+  git -C "$NOTES_CALLER_PWD" init -q
+
+  while [ "$i" -le 42 ]; do
+    id=$(printf '%08d' "$i")
+    name=$(printf 'note-%02d.md' "$i")
+    printf '%s\t%s\n' "$id" "$name" >> "$MANIFEST"
+    printf '# Note %02d\n' "$i" > "$NOTES_CALLER_PWD/notes/$id"
+    i=$((i + 1))
+  done
+  git -C "$NOTES_CALLER_PWD" add notes
+  git -C "$NOTES_CALLER_PWD" commit -q -m "obfuscated notes"
+  printf '# Tracked readable\n' > "$NOTES_CALLER_PWD/notes/note-17.md"
+  git -C "$NOTES_CALLER_PWD" add -f notes/note-17.md
+
+  counter_bin="$BATS_TEST_TMPDIR/counter-bin"
+  calls="$BATS_TEST_TMPDIR/git.calls"
+  real_git=$(command -v git)
+  mkdir -p "$counter_bin"
+  cat > "$counter_bin/git" <<SH
+#!/usr/bin/env bash
+printf '1\\n' >> '$calls'
+exec '$real_git' "\$@"
+SH
+  chmod +x "$counter_bin/git"
+
+  PATH="$counter_bin:$PATH" run detect_double_tracked_notes "$NOTES_CALLER_PWD" notes
+
+  [ "$status" -eq 0 ]
+  [ "$output" = $'00000017\tnote-17.md' ]
+  [ "$(wc -l < "$calls" | tr -d ' ')" -eq 1 ]
+}
