@@ -29,6 +29,12 @@ if [ -f "$TARGET_DIR/notes/.manifest" ]; then
   git -C "$TARGET_DIR" add notes/
 fi
 
+# Raw plaintext hashes accelerate change detection only while readable notes
+# exist. Remove those offline-verifiable fingerprints before encryption so an
+# interrupted lock cannot leave them behind in an otherwise locked checkout.
+state_file=$(git rev-parse --git-path info/notes-obfuscation-state)
+rm -f "$state_file"
+
 if [ -n "${usage_key:-}" ]; then
   rudi lock --key "$usage_key"
 else
