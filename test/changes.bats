@@ -30,6 +30,50 @@ setup() {
   set_status_suppression "$NOTES_CALLER_PWD/notes"
 }
 
+add_clean_numbered_notes() {
+  local count="$1"
+  local i=1 name
+  while [ "$i" -le "$count" ]; do
+    name=$(printf 'note-%02d.md' "$i")
+    printf '# Note %02d\n' "$i" > "$NOTES_CALLER_PWD/notes/$name"
+    i=$((i + 1))
+  done
+
+  rename_to_obfuscated "$NOTES_CALLER_PWD/notes" > /dev/null
+  git -C "$NOTES_CALLER_PWD" add -A
+  git -C "$NOTES_CALLER_PWD" commit -q -m "add many notes"
+  rename_to_readable "$NOTES_CALLER_PWD/notes" > /dev/null
+  set_status_suppression "$NOTES_CALLER_PWD/notes"
+}
+
+install_process_counter() {
+  local command="$1"
+  local real_command
+  real_command=$(command -v "$command")
+  cat > "$PROCESS_COUNTER_BIN/$command" <<SH
+#!/usr/bin/env bash
+printf '1\\n' >> "\${NOTES_PROCESS_COUNTER_DIR:?}/$command.calls"
+exec '$real_command' "\$@"
+SH
+  chmod +x "$PROCESS_COUNTER_BIN/$command"
+}
+
+setup_membership_process_counters() {
+  PROCESS_COUNTER_BIN="$BATS_TEST_TMPDIR/process-counter-bin"
+  NOTES_PROCESS_COUNTER_DIR="$BATS_TEST_TMPDIR/process-counter-results"
+  mkdir -p "$PROCESS_COUNTER_BIN" "$NOTES_PROCESS_COUNTER_DIR"
+  export NOTES_PROCESS_COUNTER_DIR
+  install_process_counter grep
+  install_process_counter basename
+}
+
+run_with_process_counters() {
+  local function_name="$1"
+  shift
+  PATH="$PROCESS_COUNTER_BIN:$PATH"
+  "$function_name" "$@"
+}
+
 record_deobfuscation_state_for_manifest() {
   local ids=()
   while IFS=$'\t' read -r id relpath; do
@@ -152,34 +196,36 @@ SH
   [ -z "$output" ]
 }
 
-@test "detect_changes: handles many notes with mixed changes" {
-  local i name delete_id
-
-  i=1
-  while [ "$i" -le 40 ]; do
-    name=$(printf 'note-%02d.md' "$i")
-    printf '# Note %02d\n' "$i" > "$NOTES_CALLER_PWD/notes/$name"
-    i=$((i + 1))
-  done
-
-  rename_to_obfuscated "$NOTES_CALLER_PWD/notes" > /dev/null
-  git -C "$NOTES_CALLER_PWD" add -A
-  git -C "$NOTES_CALLER_PWD" commit -q -m "add many notes"
-  rename_to_readable "$NOTES_CALLER_PWD/notes" > /dev/null
-  set_status_suppression "$NOTES_CALLER_PWD/notes"
+@test "detect_changes: handles many notes without per-note membership processes" {
+  local delete_id
+  add_clean_numbered_notes 40
 
   printf '# Note 10 edited\n' > "$NOTES_CALLER_PWD/notes/note-10.md"
   printf '# New\n' > "$NOTES_CALLER_PWD/notes/new.md"
   rm "$NOTES_CALLER_PWD/notes/note-20.md"
   delete_id=$(manifest_id_for_name "$MANIFEST" "note-20.md")
   rm -f "$NOTES_CALLER_PWD/notes/$delete_id"
+  setup_membership_process_counters
 
-  run detect_changes "$NOTES_CALLER_PWD/notes"
+  run run_with_process_counters detect_changes "$NOTES_CALLER_PWD/notes"
   [ "$status" -eq 0 ]
   [[ "$output" == *"modified"*"note-10.md"* ]]
   [[ "$output" == *"deleted"*"note-20.md"* ]]
   [[ "$output" == *"new"*"new.md"* ]]
   [[ "$output" != *"note-30.md"* ]]
+  [ ! -e "$NOTES_PROCESS_COUNTER_DIR/grep.calls" ]
+  [ ! -e "$NOTES_PROCESS_COUNTER_DIR/basename.calls" ]
+}
+
+@test "detect_stale_readable_notes: current notes do not launch membership processes" {
+  add_clean_numbered_notes 40
+  setup_membership_process_counters
+
+  run run_with_process_counters detect_stale_readable_notes "$NOTES_CALLER_PWD/notes"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  [ ! -e "$NOTES_PROCESS_COUNTER_DIR/grep.calls" ]
+  [ ! -e "$NOTES_PROCESS_COUNTER_DIR/basename.calls" ]
 }
 
 @test "detect_changes: preserves tracked-path filter semantics when attrs differ" {

@@ -389,12 +389,16 @@ detect_stale_readable_notes() {
 
   local relpaths relpath file known_hash current_hash state_label
   relpaths="$tmp_dir/relpaths"
-  cut -f1 "$candidates" | sort -u > "$relpaths"
+  awk -F '\t' \
+    -v current_names_file="$current_names" \
+    -v candidates_file="$candidates" '
+      FILENAME == current_names_file { current[$0] = 1; next }
+      FILENAME == candidates_file && $1 != "" && !($1 in current) { print $1 }
+    ' "$current_names" "$candidates" | sort -u > "$relpaths"
 
   while IFS= read -r relpath; do
     [ -n "$relpath" ] || continue
     _note_relpath_is_safe "$relpath" || continue
-    grep -Fxq "$relpath" "$current_names" && continue
 
     file="$abs_notes_dir/$relpath"
     [ -f "$file" ] || continue
