@@ -39,13 +39,19 @@ detect_changes() {
   local repo_root="$RESOLVED_REPO_ROOT"
   local notes_dir="$RESOLVED_NOTES_DIR"
 
-  local tmp_dir head_in head_out disk_in disk_out manifest_ids manifest_names stale_readables all_files
+  local tmp_dir head_in head_out raw_in raw_out state_aligned detected
+  local fallback_in fallback_meta fallback_out manifest_ids manifest_names stale_readables all_files
   local tracked_attr_in readable_attr_in tracked_attr_out readable_attr_out
   tmp_dir=$(mktemp -d) || return
   head_in="$tmp_dir/head-in"
   head_out="$tmp_dir/head-out"
-  disk_in="$tmp_dir/disk-in"
-  disk_out="$tmp_dir/disk-out"
+  raw_in="$tmp_dir/raw-in"
+  raw_out="$tmp_dir/raw-out"
+  state_aligned="$tmp_dir/state-aligned"
+  detected="$tmp_dir/detected"
+  fallback_in="$tmp_dir/fallback-in"
+  fallback_meta="$tmp_dir/fallback-meta"
+  fallback_out="$tmp_dir/fallback-out"
   manifest_ids="$tmp_dir/manifest-ids"
   manifest_names="$tmp_dir/manifest-names"
   stale_readables="$tmp_dir/stale-readables"
@@ -55,7 +61,11 @@ detect_changes() {
   tracked_attr_out="$tmp_dir/tracked-attr-out"
   readable_attr_out="$tmp_dir/readable-attr-out"
   : > "$head_in"
-  : > "$disk_in"
+  : > "$raw_in"
+  : > "$detected"
+  : > "$fallback_in"
+  : > "$fallback_meta"
+  : > "$fallback_out"
   : > "$manifest_ids"
   : > "$manifest_names"
   : > "$stale_readables"
@@ -70,9 +80,7 @@ detect_changes() {
     printf '%s\n' "$relpath" >> "$manifest_names"
 
     if [ -f "$abs_notes_dir/$relpath" ]; then
-      printf '%s/%s\n' "$notes_dir" "$relpath" >> "$disk_in"
-      printf '%s/%s\n' "$notes_dir" "$id" >> "$tracked_attr_in"
-      printf '%s/%s\n' "$notes_dir" "$relpath" >> "$readable_attr_in"
+      printf '%s/%s\n' "$notes_dir" "$relpath" >> "$raw_in"
     fi
   done < "$manifest"
 
@@ -90,13 +98,92 @@ detect_changes() {
     rm -rf "$tmp_dir"
     return
   }
+  if [ -s "$raw_in" ]; then
+    git -C "$repo_root" hash-object --no-filters --stdin-paths \
+      < "$raw_in" > "$raw_out" 2>/dev/null || {
+        rm -rf "$tmp_dir"
+        return
+      }
+  else
+    : > "$raw_out"
+  fi
 
-  local use_batch_hash=true
-  if [ -s "$disk_in" ]; then
-    # `hash-object --stdin-paths` hashes each readable file using attributes for
-    # that readable path. The old per-file implementation hashes readable bytes
-    # as the tracked obfuscated path (`--path=$notes_dir/$id`). Preserve that
-    # behavior by batching only when clean-filter-relevant attributes match.
+  local state_file=""
+  if declare -F _deobfuscation_state_file >/dev/null 2>&1; then
+    state_file=$(_deobfuscation_state_file "$abs_notes_dir" 2>/dev/null) || state_file=""
+  fi
+  if [ -n "$state_file" ] && [ -f "$state_file" ]; then
+    awk -F '\t' '
+      FNR == NR {
+        if (NF >= 4) {
+          path[$1] = $2
+          tracked[$1] = $3
+          raw[$1] = $4
+        } else {
+          delete path[$1]
+          delete tracked[$1]
+          delete raw[$1]
+        }
+        next
+      }
+      {
+        if ($1 in path && path[$1] == $2) {
+          print tracked[$1] "|" raw[$1]
+        } else {
+          print "|"
+        }
+      }
+    ' "$state_file" "$manifest" > "$state_aligned"
+  else
+    awk '$1 != "" { print "|" }' "$manifest" > "$state_aligned"
+  fi
+
+  exec 3< "$head_out"
+  exec 4< "$raw_out"
+  exec 5< "$state_aligned"
+  while IFS=$'\t' read -r id relpath; do
+    [ -z "$id" ] && continue
+
+    local readable_file="$abs_notes_dir/$relpath"
+    local head_hash head_exists=true state_pair state_tracked state_raw raw_hash
+    IFS= read -r head_hash <&3 || head_hash=""
+    IFS= read -r state_pair <&5 || state_pair="|"
+    state_tracked="${state_pair%%|*}"
+    state_raw="${state_pair#*|}"
+    case "$head_hash" in
+      *" missing") head_exists=false ;;
+    esac
+
+    if [ -f "$readable_file" ]; then
+      IFS= read -r raw_hash <&4 || raw_hash=""
+
+      if ! $head_exists; then
+        printf 'new\t%s\n' "$relpath" >> "$detected"
+      elif [ -n "$state_raw" ] && [ "$state_tracked" = "$head_hash" ]; then
+        [ "$state_raw" != "$raw_hash" ] && printf 'modified\t%s\n' "$relpath" >> "$detected"
+      else
+        printf '%s/%s\n' "$notes_dir" "$relpath" >> "$fallback_in"
+        printf '%s\t%s\t%s\n' "$id" "$relpath" "$head_hash" >> "$fallback_meta"
+        printf '%s/%s\n' "$notes_dir" "$id" >> "$tracked_attr_in"
+        printf '%s/%s\n' "$notes_dir" "$relpath" >> "$readable_attr_in"
+      fi
+    else
+      # Readable name not on disk — check if obfuscated form exists. If neither
+      # exists and HEAD has the obfuscated blob, the note was deleted. If the
+      # obfuscated form exists on disk, the file isn't deobfuscated — skip.
+      if [ ! -f "$abs_notes_dir/$id" ] && $head_exists; then
+        printf 'deleted\t%s\n' "$relpath" >> "$detected"
+      fi
+    fi
+  done < "$manifest"
+  exec 3<&-
+  exec 4<&-
+  exec 5<&-
+
+  if [ -s "$fallback_in" ]; then
+    local use_batch_hash=true
+    # Preserve tracked-path filter semantics for legacy, missing, or stale
+    # state rows. Current four-field rows bypass filters through raw hashes.
     if git -C "$repo_root" check-attr --stdin \
       filter text eol ident working-tree-encoding \
       < "$tracked_attr_in" > "$tracked_attr_out.raw" 2>/dev/null; then
@@ -111,63 +198,32 @@ detect_changes() {
     else
       use_batch_hash=false
     fi
+
     if $use_batch_hash && cmp -s "$tracked_attr_out" "$readable_attr_out"; then
-      git -C "$repo_root" hash-object --stdin-paths < "$disk_in" > "$disk_out" 2>/dev/null || {
-        rm -rf "$tmp_dir"
-        return
-      }
+      git -C "$repo_root" hash-object --stdin-paths \
+        < "$fallback_in" > "$fallback_out" 2>/dev/null || {
+          rm -rf "$tmp_dir"
+          return
+        }
+
+      exec 6< "$fallback_out"
+      while IFS=$'\t' read -r id relpath head_hash; do
+        local disk_hash
+        IFS= read -r disk_hash <&6 || disk_hash=""
+        [ "$head_hash" != "$disk_hash" ] && printf 'modified\t%s\n' "$relpath" >> "$detected"
+      done < "$fallback_meta"
+      exec 6<&-
     else
-      use_batch_hash=false
-      : > "$disk_out"
+      while IFS=$'\t' read -r id relpath head_hash; do
+        local disk_hash
+        disk_hash=$(git -C "$repo_root" hash-object \
+          --path="$notes_dir/$id" "$abs_notes_dir/$relpath" 2>/dev/null) || continue
+        [ "$head_hash" != "$disk_hash" ] && printf 'modified\t%s\n' "$relpath" >> "$detected"
+      done < "$fallback_meta"
     fi
-  else
-    : > "$disk_out"
   fi
 
-  exec 3< "$head_out"
-  exec 4< "$disk_out"
-  while IFS=$'\t' read -r id relpath; do
-    [ -z "$id" ] && continue
-
-    local readable_file="$abs_notes_dir/$relpath"
-    local head_hash head_exists=true
-    IFS= read -r head_hash <&3 || head_hash=""
-    case "$head_hash" in
-      *" missing") head_exists=false ;;
-    esac
-
-    if [ -f "$readable_file" ]; then
-      # File exists on disk — check if it's new or modified.
-      if ! $head_exists; then
-        printf 'new\t%s\n' "$relpath"
-        if $use_batch_hash; then
-          if ! IFS= read -r _disk_hash <&4; then
-            _disk_hash=""
-          fi
-        fi
-        continue
-      fi
-
-      local disk_hash
-      if $use_batch_hash; then
-        IFS= read -r disk_hash <&4 || disk_hash=""
-      else
-        disk_hash=$(git -C "$repo_root" hash-object --path="$notes_dir/$id" "$readable_file" 2>/dev/null) || continue
-      fi
-      if [ "$head_hash" != "$disk_hash" ]; then
-        printf 'modified\t%s\n' "$relpath"
-      fi
-    else
-      # Readable name not on disk — check if obfuscated form exists. If neither
-      # exists and HEAD has the obfuscated blob, the note was deleted. If the
-      # obfuscated form exists on disk, the file isn't deobfuscated — skip.
-      if [ ! -f "$abs_notes_dir/$id" ] && $head_exists; then
-        printf 'deleted\t%s\n' "$relpath"
-      fi
-    fi
-  done < "$manifest"
-  exec 3<&-
-  exec 4<&-
+  cat "$detected"
 
   # Classify files not represented by the current manifest in one set pass.
   # Per-file grep and basename processes dominate this path at repository scale.

@@ -74,6 +74,32 @@ run_with_process_counters() {
   "$function_name" "$@"
 }
 
+setup_clean_filter_counter() {
+  CLEAN_FILTER_CALLS="$BATS_TEST_TMPDIR/clean-filter.calls"
+  CLEAN_FILTER="$BATS_TEST_TMPDIR/counting-clean-filter"
+  export CLEAN_FILTER_CALLS
+  cat > "$CLEAN_FILTER" <<'BASH'
+#!/usr/bin/env bash
+printf '1\n' >> "${CLEAN_FILTER_CALLS:?}"
+cat
+BASH
+  chmod +x "$CLEAN_FILTER"
+  git -C "$NOTES_CALLER_PWD" config filter.notes-test.clean "$CLEAN_FILTER"
+  git -C "$NOTES_CALLER_PWD" config filter.notes-test.smudge cat
+  git -C "$NOTES_CALLER_PWD" config filter.notes-test.required true
+  printf 'notes/** filter=notes-test\n' > "$NOTES_CALLER_PWD/.gitattributes"
+  git -C "$NOTES_CALLER_PWD" add .gitattributes
+  git -C "$NOTES_CALLER_PWD" commit -q -m "add counting clean filter"
+}
+
+clean_filter_call_count() {
+  if [ -f "$CLEAN_FILTER_CALLS" ]; then
+    wc -l < "$CLEAN_FILTER_CALLS" | tr -d ' '
+  else
+    printf '0\n'
+  fi
+}
+
 record_deobfuscation_state_for_manifest() {
   local ids=()
   while IFS=$'\t' read -r id relpath; do
@@ -226,6 +252,90 @@ SH
   [ -z "$output" ]
   [ ! -e "$NOTES_PROCESS_COUNTER_DIR/grep.calls" ]
   [ ! -e "$NOTES_PROCESS_COUNTER_DIR/basename.calls" ]
+}
+
+@test "detect_changes: trusted raw baselines avoid per-note clean filters" {
+  local delete_id state
+  add_clean_numbered_notes 40
+  setup_clean_filter_counter
+  record_deobfuscation_state_for_manifest
+
+  state="$NOTES_CALLER_PWD/.git/info/notes-obfuscation-state"
+  awk -F '\t' 'NF != 4 { exit 1 }' "$state"
+  rm -f "$CLEAN_FILTER_CALLS"
+
+  printf '# Note 10 edited\n' > "$NOTES_CALLER_PWD/notes/note-10.md"
+  delete_id=$(manifest_id_for_name "$MANIFEST" "note-20.md")
+  rm "$NOTES_CALLER_PWD/notes/note-20.md"
+  rm -f "$NOTES_CALLER_PWD/notes/$delete_id"
+
+  run detect_changes "$NOTES_CALLER_PWD/notes"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"modified"*"note-10.md"* ]]
+  [[ "$output" == *"deleted"*"note-20.md"* ]]
+  [ "$(clean_filter_call_count)" -eq 0 ]
+}
+
+@test "detect_changes: stale raw baseline safely falls back then refreshes" {
+  local alpha_id
+  setup_clean_filter_counter
+  record_deobfuscation_state_for_manifest
+  alpha_id=$(manifest_id_for_name "$MANIFEST" "alpha.md")
+
+  clear_status_suppression "$NOTES_CALLER_PWD/notes"
+  rename_to_obfuscated "$NOTES_CALLER_PWD/notes" > /dev/null
+  printf '# Alpha upstream\n' > "$NOTES_CALLER_PWD/notes/$alpha_id"
+  git -C "$NOTES_CALLER_PWD" add -f "notes/$alpha_id"
+  git -C "$NOTES_CALLER_PWD" commit -q -m "update alpha upstream"
+  rename_to_readable "$NOTES_CALLER_PWD/notes" > /dev/null
+  rm -f "$CLEAN_FILTER_CALLS"
+
+  run detect_changes "$NOTES_CALLER_PWD/notes"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  [ "$(clean_filter_call_count)" -eq 1 ]
+
+  record_deobfuscation_state_for_manifest
+  rm -f "$CLEAN_FILTER_CALLS"
+  run detect_changes "$NOTES_CALLER_PWD/notes"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  [ "$(clean_filter_call_count)" -eq 0 ]
+}
+
+@test "detect_changes: staged baseline still compares against old HEAD" {
+  local alpha_id
+  setup_clean_filter_counter
+  record_deobfuscation_state_for_manifest
+  alpha_id=$(manifest_id_for_name "$MANIFEST" "alpha.md")
+
+  clear_status_suppression "$NOTES_CALLER_PWD/notes"
+  rename_to_obfuscated "$NOTES_CALLER_PWD/notes" > /dev/null
+  printf '# Alpha staged\n' > "$NOTES_CALLER_PWD/notes/$alpha_id"
+  git -C "$NOTES_CALLER_PWD" add -f "notes/$alpha_id"
+  rename_to_readable "$NOTES_CALLER_PWD/notes" > /dev/null
+  record_deobfuscation_state_for_manifest
+  rm -f "$CLEAN_FILTER_CALLS"
+
+  run detect_changes "$NOTES_CALLER_PWD/notes"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"modified"*"alpha.md"* ]]
+  [ "$(clean_filter_call_count)" -eq 1 ]
+}
+
+@test "detect_changes: legacy state safely falls back to clean filters" {
+  local state
+  setup_clean_filter_counter
+  record_deobfuscation_state_for_manifest
+  state="$NOTES_CALLER_PWD/.git/info/notes-obfuscation-state"
+  cut -f1-3 "$state" > "$state.legacy"
+  mv "$state.legacy" "$state"
+  rm -f "$CLEAN_FILTER_CALLS"
+
+  run detect_changes "$NOTES_CALLER_PWD/notes"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  [ "$(clean_filter_call_count)" -eq 2 ]
 }
 
 @test "detect_changes: preserves tracked-path filter semantics when attrs differ" {

@@ -196,8 +196,9 @@ rename_to_obfuscated() {
 # file (safe to update/remove after pull/merge/checkout) from a locally-edited
 # readable file (must preserve).
 #
-# Current row format: <id>\t<relpath>\t<hash>
-# Legacy row format:  <id>\t<hash>
+# Current row format: <id>\t<relpath>\t<tracked-hash>\t<raw-hash>
+# Previous row format: <id>\t<relpath>\t<tracked-hash>
+# Legacy row format:   <id>\t<tracked-hash>
 _deobfuscation_state_file() {
   local notes_dir="$1"
   resolve_notes_dir "$notes_dir" || return 1
@@ -256,22 +257,83 @@ _record_deobfuscation_base_hashes() {
 
   resolve_notes_dir "$notes_dir" || return 0
   local repo_root="$RESOLVED_REPO_ROOT"
+  local notes_rel="$RESOLVED_NOTES_DIR"
   local state="$repo_root/.git/info/notes-obfuscation-state"
+  local tmp_dir requested candidates records raw_in raw_out index_out rows
+  local tracked_paths=()
+  tmp_dir=$(mktemp -d) || return 1
+  requested="$tmp_dir/requested"
+  candidates="$tmp_dir/candidates"
+  records="$tmp_dir/records"
+  raw_in="$tmp_dir/raw-in"
+  raw_out="$tmp_dir/raw-out"
+  index_out="$tmp_dir/index-out"
+  rows="$tmp_dir/rows"
+  printf '%s\n' "${ids[@]}" > "$requested"
+  : > "$records"
+  : > "$raw_in"
+
+  awk -F '\t' '
+    FNR == NR { requested[$1] = 1; next }
+    $1 in requested { print $1 "\t" $2 }
+  ' "$requested" "$manifest" > "$candidates"
+
+  local id relpath
+  while IFS=$'\t' read -r id relpath; do
+    [ -z "$id" ] && continue
+    [ -f "$notes_dir/$relpath" ] || continue
+    printf '%s\t%s\t%s/%s\n' "$id" "$relpath" "$notes_rel" "$id" >> "$records"
+    printf '%s/%s\n' "$notes_rel" "$relpath" >> "$raw_in"
+    tracked_paths+=("$notes_rel/$id")
+  done < "$candidates"
+
+  if [ ! -s "$records" ]; then
+    rm -rf "$tmp_dir"
+    return 0
+  fi
+
+  if ! git -C "$repo_root" hash-object --no-filters --stdin-paths \
+    < "$raw_in" > "$raw_out"; then
+    rm -rf "$tmp_dir"
+    return 1
+  fi
+  if ! git -C "$repo_root" -c core.quotePath=false ls-files --stage -- \
+    "${tracked_paths[@]}" > "$index_out"; then
+    rm -rf "$tmp_dir"
+    return 1
+  fi
+
+  awk -F '\t' \
+    -v index_file="$index_out" \
+    -v records_file="$records" \
+    -v raw_file="$raw_out" '
+      FILENAME == index_file {
+        split($1, metadata, " ")
+        tracked[$2] = metadata[2]
+        next
+      }
+      FILENAME == records_file {
+        if ((getline raw < raw_file) <= 0) exit 1
+        if ($3 in tracked && raw != "") {
+          print $1 "\t" $2 "\t" tracked[$3] "\t" raw
+        }
+      }
+    ' "$index_out" "$records" > "$rows" || {
+      rm -rf "$tmp_dir"
+      return 1
+    }
+
   mkdir -p "$(dirname "$state")"
   touch "$state"
 
-  # Append-only on purpose: O_APPEND under PIPE_BUF is atomic, so concurrent
-  # writers get out-of-order rows but never torn ones, and the lookup helper
-  # takes the last matching entry. Don't "fix" this back to tmp+mv -- that's
-  # the read-modify-write race we're avoiding.
-  for id in "${ids[@]}"; do
-    local relpath sha
-    relpath=$(manifest_name_for_id "$manifest" "$id")
-    [ -z "$relpath" ] && continue
-    [ -f "$notes_dir/$relpath" ] || continue
-    sha=$(git -C "$repo_root" hash-object -- "$notes_dir/$relpath") || return 1
-    printf '%s\t%s\t%s\n' "$id" "$relpath" "$sha" >> "$state"
-  done
+  # Append one complete row at a time. Each row stays below PIPE_BUF, preserving
+  # the concurrent append contract while newer rows shadow older formats.
+  local row
+  while IFS= read -r row; do
+    [ -n "$row" ] && printf '%s\n' "$row" >> "$state"
+  done < "$rows"
+
+  rm -rf "$tmp_dir"
 }
 
 # Rename a single obfuscated ID back to its readable name.
