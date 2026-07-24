@@ -222,6 +222,17 @@ _deobfuscation_base_hash_for_id() {
   ' "$state"
 }
 
+_deobfuscation_base_raw_hash_for_id() {
+  local notes_dir="$1" id="$2"
+  local state
+  state=$(_deobfuscation_state_file "$notes_dir") || return 0
+  [ -f "$state" ] || return 0
+  awk -F '\t' -v wanted="$id" '
+    $1 == wanted { found = (NF >= 4 ? $4 : "") }
+    END { if (found != "") print found }
+  ' "$state"
+}
+
 _deobfuscation_readable_matches_base_ref() {
   local notes_dir="$1" id="$2" relpath="$3" base_ref="$4"
   [ -n "$base_ref" ] || return 1
@@ -362,12 +373,20 @@ _rename_one_to_readable() {
   [ ! -d "$target_dir" ] && mkdir -p "$target_dir"
 
   if [ -e "$notes_dir/$relpath" ] && ! cmp -s "$notes_dir/$id" "$notes_dir/$relpath"; then
-    local current_hash base_hash state_file dirty_readable=false
+    local current_hash base_hash base_raw_hash state_file dirty_readable=false
     state_file=$(_deobfuscation_state_file "$notes_dir" 2>/dev/null) || state_file=""
-    if ! current_hash=$(git -C "$notes_dir" hash-object -- "$notes_dir/$relpath" 2>/dev/null); then
-      current_hash=""
+    base_raw_hash=$(_deobfuscation_base_raw_hash_for_id "$notes_dir" "$id")
+    if [ -n "$base_raw_hash" ]; then
+      base_hash="$base_raw_hash"
+      if ! current_hash=$(git -C "$notes_dir" hash-object --no-filters -- "$notes_dir/$relpath" 2>/dev/null); then
+        current_hash=""
+      fi
+    else
+      base_hash=$(_deobfuscation_base_hash_for_id "$notes_dir" "$id")
+      if ! current_hash=$(git -C "$notes_dir" hash-object -- "$notes_dir/$relpath" 2>/dev/null); then
+        current_hash=""
+      fi
     fi
-    base_hash=$(_deobfuscation_base_hash_for_id "$notes_dir" "$id")
 
     # No state file (fresh clone or pre-safety upgrade) -> trust the readable
     # and let the rename proceed. Force-prompting on every file would train

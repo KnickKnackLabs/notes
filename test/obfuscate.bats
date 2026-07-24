@@ -1028,6 +1028,29 @@ EOT
   [ -f "$NOTES_CALLER_PWD/notes/$alpha_id" ]
 }
 
+@test "deobfuscate accepts clean readable when tracked and readable filters differ" {
+  git -C "$NOTES_CALLER_PWD" config filter.prefix.clean "sed 's/^/clean:/'"
+  git -C "$NOTES_CALLER_PWD" config filter.prefix.smudge cat
+  printf 'notes/???????? filter=prefix\n' > "$NOTES_CALLER_PWD/.gitattributes"
+
+  notes obfuscate
+  local beta_id
+  beta_id=$(grep "beta.md" "$NOTES_CALLER_PWD/notes/.manifest" | cut -f1)
+  git -C "$NOTES_CALLER_PWD" add -A
+  git -C "$NOTES_CALLER_PWD" commit -q -m "obfuscate with tracked-path filter"
+  notes deobfuscate
+
+  # Simulate checkout restoring the filtered obfuscated source while the clean
+  # generated readable remains on disk.
+  git -C "$NOTES_CALLER_PWD" update-index --no-assume-unchanged "notes/$beta_id"
+  git -C "$NOTES_CALLER_PWD" checkout -- "notes/$beta_id"
+
+  run notes deobfuscate
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"refusing to overwrite dirty readable note"* ]]
+  [[ "$(cat "$NOTES_CALLER_PWD/notes/beta.md")" == clean:* ]]
+}
+
 @test "deobfuscate refreshes clean stale readable when state row is missing but base ref matches" {
   notes obfuscate
   local alpha_id base_ref state
