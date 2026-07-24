@@ -88,6 +88,42 @@ generate_test_key() {
   grep -q "secret content" "$TARGET_DIR/notes/secret.md"
 }
 
+@test "lock removes plaintext hashes before invoking rudi" {
+  notes setup --yes
+
+  local fpr
+  fpr=$(generate_test_key "$GNUPGHOME")
+  notes add-user -- --gpg-key "$fpr"
+
+  mkdir -p "$TARGET_DIR/notes"
+  echo "secret content" > "$TARGET_DIR/notes/secret.md"
+  git -C "$TARGET_DIR" add .
+  git -C "$TARGET_DIR" commit -q -m "Add encrypted note"
+
+  local state="$TARGET_DIR/.git/info/notes-obfuscation-state"
+  local fake_bin="$BATS_TEST_TMPDIR/fake-lock-bin"
+  local lock_log="$BATS_TEST_TMPDIR/rudi-lock.log"
+  [ -f "$state" ]
+  mkdir -p "$fake_bin"
+
+  cat > "$fake_bin/rudi" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+[ "${1:-}" = "lock" ] || exit 64
+[ ! -e "${RUDI_STATE_FILE:?RUDI_STATE_FILE not set}" ] || exit 74
+: > "${RUDI_LOCK_LOG:?RUDI_LOCK_LOG not set}"
+exit 73
+SH
+  chmod +x "$fake_bin/rudi"
+  export RUDI_STATE_FILE="$state"
+  export RUDI_LOCK_LOG="$lock_log"
+
+  PATH="$fake_bin:$PATH" run notes lock --yes
+  [ "$status" -eq 73 ]
+  [ -f "$lock_log" ]
+  [ ! -e "$state" ]
+}
+
 @test "unlock no-ops when already unlocked, even with a dirty tree (#42)" {
   notes setup --yes
 
