@@ -32,11 +32,19 @@ done < <(git check-attr --cached -z filter -- "${staged[@]}")
 bad_files=()
 for file in "${encrypted_staged[@]}"; do
   status_output=""
-  if ! status_output=$(git-crypt status -- "$file" 2>&1); then
-    : # git-crypt reports plaintext paths through output and a non-zero status.
+  status=0
+  if status_output=$(git-crypt status -- "$file" 2>&1); then
+    :
+  else
+    status=$?
   fi
+
   if grep -qi "not encrypted" <<< "$status_output"; then
     bad_files+=("$file")
+  elif [ "$status" -ne 0 ]; then
+    echo "ERROR: git-crypt could not inspect staged encrypted path: $file" >&2
+    [ -z "$status_output" ] || printf '%s\n' "$status_output" >&2
+    exit 1
   fi
 done
 

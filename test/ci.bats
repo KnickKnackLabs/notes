@@ -21,6 +21,11 @@ setup() {
   [ "$install_line" -lt "$test_line" ]
 }
 
+@test "hosted whitespace validation checks committed content" {
+  grep -Fq 'run: git diff --check "$(git hash-object -t tree /dev/null)" HEAD --' "$workflow"
+  ! grep -Eq 'run: git diff --check[[:space:]]*$' "$workflow"
+}
+
 @test "hosted validation runs the repository's configured convention lints" {
   grep -Fq 'run: codebase lint "$PWD"' "$workflow"
 }
