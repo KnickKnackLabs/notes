@@ -212,7 +212,7 @@ _update_index_paths() {
   [ ${#paths[@]} -gt 0 ] || return 0
 
   GIT_LITERAL_PATHSPECS=1 git -C "$repo_root" ls-files -z -- "${paths[@]}" |
-    git -C "$repo_root" update-index "$flag" -z --stdin 2>/dev/null || true
+    git -C "$repo_root" update-index "$flag" -z --stdin 2>/dev/null
 }
 
 # Set assume-unchanged on obfuscated paths + add exclude entries for readable names.
@@ -233,10 +233,15 @@ set_status_suppression() {
 
   # Set assume-unchanged flags in one index update.
   if [ ${#scoped_ids[@]} -gt 0 ] && [ -n "${scoped_ids[0]}" ]; then
-    printf '%s\n' "${scoped_ids[@]/#/$notes_dir/}" | _update_index_paths "$repo_root" --assume-unchanged
+    if ! printf '%s\n' "${scoped_ids[@]/#/$notes_dir/}" |
+      _update_index_paths "$repo_root" --assume-unchanged; then
+      return 1
+    fi
   else
-    awk -F '\t' -v prefix="$notes_dir/" '$1 != "" { print prefix $1 }' "$manifest" |
-      _update_index_paths "$repo_root" --assume-unchanged
+    if ! awk -F '\t' -v prefix="$notes_dir/" '$1 != "" { print prefix $1 }' "$manifest" |
+      _update_index_paths "$repo_root" --assume-unchanged; then
+      return 1
+    fi
   fi
 
   # Add exclude entries for readable names
@@ -261,10 +266,15 @@ clear_status_suppression() {
 
   # Clear assume-unchanged flags in one index update.
   if [ ${#scoped_ids[@]} -gt 0 ] && [ -n "${scoped_ids[0]}" ]; then
-    printf '%s\n' "${scoped_ids[@]/#/$notes_dir/}" | _update_index_paths "$repo_root" --no-assume-unchanged
+    if ! printf '%s\n' "${scoped_ids[@]/#/$notes_dir/}" |
+      _update_index_paths "$repo_root" --no-assume-unchanged; then
+      return 1
+    fi
   else
-    awk -F '\t' -v prefix="$notes_dir/" '$1 != "" { print prefix $1 }' "$manifest" |
-      _update_index_paths "$repo_root" --no-assume-unchanged
+    if ! awk -F '\t' -v prefix="$notes_dir/" '$1 != "" { print prefix $1 }' "$manifest" |
+      _update_index_paths "$repo_root" --no-assume-unchanged; then
+      return 1
+    fi
   fi
 
   # Remove exclude entries for readable names
@@ -349,7 +359,9 @@ detect_stale_readable_notes() {
 
   state=""
   if declare -F _deobfuscation_state_file >/dev/null 2>&1; then
-    state=$(_deobfuscation_state_file "$abs_notes_dir" 2>/dev/null || true)
+    if ! state=$(_deobfuscation_state_file "$abs_notes_dir" 2>/dev/null); then
+      state=""
+    fi
   fi
 
   if [ -n "$state" ] && [ -f "$state" ]; then
@@ -457,7 +469,10 @@ reconcile_stale_readable_notes() {
     esac
   done <<< "$stale"
 
-  find "$abs_notes_dir" -mindepth 1 -type d -empty -delete 2>/dev/null || true
+  # Empty-directory cleanup is cosmetic after stale files are reconciled.
+  if ! find "$abs_notes_dir" -mindepth 1 -type d -empty -delete 2>/dev/null; then
+    :
+  fi
 }
 
 # Rebuild all derived git-status suppression from the current manifest. Unlike
@@ -475,11 +490,15 @@ rebuild_status_suppression() {
   local state=""
 
   if declare -F _deobfuscation_state_file >/dev/null 2>&1; then
-    state=$(_deobfuscation_state_file "$abs_notes_dir" 2>/dev/null || true)
+    if ! state=$(_deobfuscation_state_file "$abs_notes_dir" 2>/dev/null); then
+      state=""
+    fi
   fi
   if [ -n "$state" ] && [ -f "$state" ]; then
-    awk -F '\t' -v prefix="$notes_dir/" '$1 != "" { print prefix $1 }' "$state" | sort -u |
-      _update_index_paths "$repo_root" --no-assume-unchanged
+    if ! awk -F '\t' -v prefix="$notes_dir/" '$1 != "" { print prefix $1 }' "$state" | sort -u |
+      _update_index_paths "$repo_root" --no-assume-unchanged; then
+      return 1
+    fi
   fi
 
   mkdir -p "$(dirname "$exclude_file")"

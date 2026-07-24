@@ -39,7 +39,9 @@ if [ "${usage_dry_run:-}" = "true" ]; then
       [ ! -f "$abs_notes_dir/$relpath" ] && continue
       base=$(basename "$relpath")
       manifest_has_id "$manifest" "$base" && continue
-      existing_id=$(manifest_id_for_name "$manifest" "$relpath" || true)
+      if ! existing_id=$(manifest_id_for_name "$manifest" "$relpath"); then
+        existing_id=""
+      fi
       if [ -n "$existing_id" ]; then
         echo "  $relpath → $existing_id"
       else
@@ -53,7 +55,9 @@ if [ "${usage_dry_run:-}" = "true" ]; then
       [[ "$relpath" == ".manifest" ]] && continue
       base=$(basename "$f")
       manifest_has_id "$manifest" "$base" && continue
-      existing_id=$(manifest_id_for_name "$manifest" "$relpath" || true)
+      if ! existing_id=$(manifest_id_for_name "$manifest" "$relpath"); then
+        existing_id=""
+      fi
       if [ -n "$existing_id" ]; then
         echo "  $relpath → $existing_id"
       else
@@ -69,7 +73,9 @@ fi
 if [ ${#ARGS[@]} -gt 0 ]; then
   scoped_ids=()
   for relpath in ${ARGS[@]+"${ARGS[@]}"}; do
-    id=$(manifest_id_for_name "$manifest" "$relpath" || true)
+    if ! id=$(manifest_id_for_name "$manifest" "$relpath"); then
+      id=""
+    fi
     [ -n "$id" ] && scoped_ids+=("$id")
   done
   [ ${#scoped_ids[@]} -gt 0 ] && clear_status_suppression "$abs_notes_dir" ${scoped_ids[@]+"${scoped_ids[@]}"}
@@ -108,12 +114,15 @@ stage_manifest=false
 [ ${#ARGS[@]} -eq 0 ] && stage_manifest=true
 while IFS=$'\t' read -r relpath id; do
   git -C "$TARGET_DIR" add "$notes_dir/$id"
-  git -C "$TARGET_DIR" rm --cached --quiet "$notes_dir/$relpath" 2>/dev/null || true
+  # A readable path can already be absent from the index on repeated runs.
+  if ! git -C "$TARGET_DIR" rm --cached --quiet "$notes_dir/$relpath" 2>/dev/null; then
+    :
+  fi
   if ! manifest_entry_matches_head "$id" "$relpath"; then
     stage_manifest=true
   fi
   echo "  $relpath → $id"
-  ((new_count++)) || true
+  new_count=$((new_count + 1))
 done <<< "$output"
 
 if $stage_manifest; then

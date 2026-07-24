@@ -89,8 +89,10 @@ fi
 if [ "$obf_status" = "deobfuscated" ]; then
   echo "Reconciling notes state after pull..."
 
-  # Reconcile stale readable files from upstream deletions/renames
-  stale_output=$(reconcile_stale_readable_notes "$abs_notes_dir" 2>/dev/null) || true
+  # Reconciliation is best-effort here; pull already completed before this repair.
+  if ! stale_output=$(reconcile_stale_readable_notes "$abs_notes_dir" 2>/dev/null); then
+    stale_output=""
+  fi
   if [ -n "$stale_output" ]; then
     while IFS=$'\t' read -r action relpath quarantine_path; do
       [ -n "$action" ] || continue

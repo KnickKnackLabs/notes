@@ -31,8 +31,10 @@ if [ -n "${usage_files:-}" ]; then
 fi
 
 if [ "${usage_summary:-}" = "true" ]; then
-  # Summary mode: just list changes
-  changes=$(detect_changes "$abs_notes_dir") || true
+  # Summary mode: just list changes. An unavailable manifest is a clean result.
+  if ! changes=$(detect_changes "$abs_notes_dir"); then
+    changes=""
+  fi
 
   if [ -z "$changes" ]; then
     echo "No changes."
@@ -62,10 +64,10 @@ if [ "${usage_summary:-}" = "true" ]; then
     fi
 
     case "$status" in
-      modified)       echo "  modified:  $relpath"; ((modified++)) || true ;;
-      new)            echo "  new:       $relpath"; ((new++)) || true ;;
-      deleted)        echo "  deleted:   $relpath"; ((deleted++)) || true ;;
-      stale-readable) echo "  stale-readable: $relpath"; ((stale++)) || true ;;
+      modified)       echo "  modified:  $relpath"; modified=$((modified + 1)) ;;
+      new)            echo "  new:       $relpath"; new=$((new + 1)) ;;
+      deleted)        echo "  deleted:   $relpath"; deleted=$((deleted + 1)) ;;
+      stale-readable) echo "  stale-readable: $relpath"; stale=$((stale + 1)) ;;
     esac
   done <<< "$changes"
 
@@ -77,8 +79,10 @@ if [ "${usage_summary:-}" = "true" ]; then
     echo "$total change(s): $modified modified, $new new, $deleted deleted, $stale stale-readable"
   fi
 else
-  # Diff mode: show full diffs
-  changes=$(detect_changes "$abs_notes_dir") || true
+  # Diff mode: show full diffs. An unavailable manifest is a clean result.
+  if ! changes=$(detect_changes "$abs_notes_dir"); then
+    changes=""
+  fi
 
   if [ -z "$changes" ]; then
     echo "No changes."

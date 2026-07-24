@@ -37,7 +37,9 @@ if [ -z "$pr_number" ] && [ ${#ARGS[@]} -eq 0 ]; then
     exit 1
   fi
 
-  changes=$(detect_changes "$abs_notes_dir") || true
+  if ! changes=$(detect_changes "$abs_notes_dir"); then
+    changes=""
+  fi
   if [ -z "$changes" ]; then
     echo "No changes."
     exit 0
@@ -54,7 +56,10 @@ temp_refs=()
 cleanup_temp_refs() {
   local ref
   for ref in ${temp_refs[@]+"${temp_refs[@]}"}; do
-    git -C "$repo_root" update-ref -d "$ref" 2>/dev/null || true
+    # Cleanup must not replace the command's real result during the EXIT trap.
+    if ! git -C "$repo_root" update-ref -d "$ref" 2>/dev/null; then
+      :
+    fi
   done
 }
 trap cleanup_temp_refs EXIT

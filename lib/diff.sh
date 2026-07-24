@@ -91,7 +91,11 @@ materialize_readable_notes_ref() {
     if ! $has_manifest || ! grep -Fxq -- "$relpath" "$manifest_ids"; then
       unmapped_count=$((unmapped_count + 1))
     fi
-  done < <(git -C "$repo_root" ls-tree -r -z --name-only "$ref" -- "$notes_dir" 2>/dev/null || true)
+  done < <(
+    if ! git -C "$repo_root" ls-tree -r -z --name-only "$ref" -- "$notes_dir" 2>/dev/null; then
+      :
+    fi
+  )
 
   rm -f "$manifest" "$manifest_ids"
   if [ "$unmapped_count" -gt 0 ]; then

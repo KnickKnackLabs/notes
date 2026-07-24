@@ -75,10 +75,13 @@ detect_changes() {
   done < "$manifest"
 
   if declare -F detect_stale_readable_notes >/dev/null 2>&1; then
-    detect_stale_readable_notes "$abs_notes_dir" 2>/dev/null \
+    # Stale-state discovery is advisory during change classification.
+    if ! detect_stale_readable_notes "$abs_notes_dir" 2>/dev/null \
       | while IFS=$'\t' read -r _stale_state stale_relpath; do
           [ -n "$stale_relpath" ] && printf '%s\n' "$stale_relpath"
-        done > "$stale_readables" || true
+        done > "$stale_readables"; then
+      :
+    fi
   fi
 
   git -C "$repo_root" cat-file --batch-check='%(objectname)' < "$head_in" > "$head_out" 2>/dev/null || {
@@ -136,7 +139,9 @@ detect_changes() {
       if ! $head_exists; then
         printf 'new\t%s\n' "$relpath"
         if $use_batch_hash; then
-          IFS= read -r _disk_hash <&4 || true
+          if ! IFS= read -r _disk_hash <&4; then
+            _disk_hash=""
+          fi
         fi
         continue
       fi
@@ -189,6 +194,21 @@ detect_changes() {
   rm -rf "$tmp_dir"
 }
 
+# Print ordinary diff output while preserving genuine diff execution failures.
+_emit_notes_diff() {
+  local status
+  if diff "$@"; then
+    return 0
+  else
+    status=$?
+  fi
+
+  case "$status" in
+    1) return 0 ;; # differences found
+    *) return "$status" ;;
+  esac
+}
+
 # Show diffs for changed notes.
 # Usage: show_diffs <abs_notes_dir> [file...]
 #   Without files: diffs all changed notes
@@ -233,13 +253,13 @@ show_diffs() {
         local tmp
         tmp=$(mktemp) || continue
         git -C "$repo_root" cat-file --filters "HEAD:$git_path" > "$tmp" 2>/dev/null
-        diff -u --label "a/$relpath" --label "b/$relpath" "$tmp" "$readable_file" || true
+        _emit_notes_diff -u --label "a/$relpath" --label "b/$relpath" "$tmp" "$readable_file"
         rm -f "$tmp"
         echo ""
         ;;
       new)
         echo "=== $relpath (new) ==="
-        diff -u --label /dev/null --label "b/$relpath" /dev/null "$readable_file" || true
+        _emit_notes_diff -u --label /dev/null --label "b/$relpath" /dev/null "$readable_file"
         echo ""
         ;;
       deleted)
@@ -247,7 +267,7 @@ show_diffs() {
         local tmp
         tmp=$(mktemp) || continue
         git -C "$repo_root" cat-file --filters "HEAD:$git_path" > "$tmp" 2>/dev/null
-        diff -u --label "a/$relpath" --label /dev/null "$tmp" /dev/null || true
+        _emit_notes_diff -u --label "a/$relpath" --label /dev/null "$tmp" /dev/null
         rm -f "$tmp"
         echo ""
         ;;

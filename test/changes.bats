@@ -87,6 +87,22 @@ rename_manifest_entry_in_head() {
   [[ "$output" != *"beta.md"* ]]
 }
 
+@test "notes changes propagates diff execution failures" {
+  echo "# Alpha modified" > "$NOTES_CALLER_PWD/notes/alpha.md"
+
+  local mock_bin="$BATS_TEST_TMPDIR/mock-diff-bin"
+  mkdir -p "$mock_bin"
+  cat > "$mock_bin/diff" <<'SH'
+#!/usr/bin/env bash
+exit 73
+SH
+  chmod +x "$mock_bin/diff"
+
+  PATH="$mock_bin:$PATH" run notes changes
+
+  [ "$status" -eq 73 ]
+}
+
 @test "detect_changes: detects new file not in manifest" {
   echo "# Gamma" > "$NOTES_CALLER_PWD/notes/gamma.md"
 
