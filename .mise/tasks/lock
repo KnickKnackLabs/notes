@@ -37,3 +37,8 @@ else
   # files, not just notes. Tracked in KnickKnackLabs/rudi#5.
   echo "Note: lock re-encrypts all encrypted files in this repo (rudi#5)."
 fi
+
+# Raw plaintext hashes accelerate change detection only while readable notes
+# exist. Do not retain those offline-verifiable fingerprints after locking.
+state_file=$(git rev-parse --git-path info/notes-obfuscation-state)
+rm -f "$state_file"

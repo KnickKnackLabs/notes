@@ -68,12 +68,17 @@ generate_test_key() {
   git -C "$TARGET_DIR" add .
   git -C "$TARGET_DIR" commit -q -m "Add encrypted note"
 
+  local state="$TARGET_DIR/.git/info/notes-obfuscation-state"
+  [ -f "$state" ]
+  awk -F '\t' 'NF >= 4 && $4 != "" { found=1 } END { exit !found }' "$state"
+
   # Lock
   run notes lock --yes
   [ "$status" -eq 0 ]
 
-  # File should not be readable as plaintext
+  # Neither plaintext nor its raw content hashes remain after locking.
   ! grep -q "secret content" "$TARGET_DIR/notes/secret.md" 2>/dev/null
+  [ ! -e "$state" ]
 
   # Unlock
   run notes unlock
