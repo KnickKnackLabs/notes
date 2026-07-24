@@ -196,8 +196,9 @@ rename_to_obfuscated() {
 # file (safe to update/remove after pull/merge/checkout) from a locally-edited
 # readable file (must preserve).
 #
-# Current row format: <id>\t<relpath>\t<hash>
-# Legacy row format:  <id>\t<hash>
+# Current row format: <id>\t<relpath>\t<tracked-hash>\t<raw-hash>
+# Previous row format: <id>\t<relpath>\t<tracked-hash>
+# Legacy row format:   <id>\t<tracked-hash>
 _deobfuscation_state_file() {
   local notes_dir="$1"
   resolve_notes_dir "$notes_dir" || return 1
@@ -217,6 +218,17 @@ _deobfuscation_base_hash_for_id() {
     $1 == wanted {
       if (NF >= 3) found=$3; else found=$2
     }
+    END { if (found != "") print found }
+  ' "$state"
+}
+
+_deobfuscation_base_raw_hash_for_id() {
+  local notes_dir="$1" id="$2"
+  local state
+  state=$(_deobfuscation_state_file "$notes_dir") || return 0
+  [ -f "$state" ] || return 0
+  awk -F '\t' -v wanted="$id" '
+    $1 == wanted { found = (NF >= 4 ? $4 : "") }
     END { if (found != "") print found }
   ' "$state"
 }
@@ -246,7 +258,7 @@ _deobfuscation_readable_matches_base_ref() {
   return 1
 }
 
-_record_deobfuscation_base_hashes() {
+_calculate_deobfuscation_state_rows() {
   local notes_dir="$1"
   shift
   local ids=("$@")
@@ -256,22 +268,94 @@ _record_deobfuscation_base_hashes() {
 
   resolve_notes_dir "$notes_dir" || return 0
   local repo_root="$RESOLVED_REPO_ROOT"
-  local state="$repo_root/.git/info/notes-obfuscation-state"
+  local notes_rel="$RESOLVED_NOTES_DIR"
+  local workspace
+  local tracked_paths=()
+  workspace=$(mktemp -d) || return 1
+  printf '%s\n' "${ids[@]}" > "$workspace/requested"
+  : > "$workspace/records"
+  : > "$workspace/raw-in"
+
+  awk -F '\t' '
+    FNR == NR { requested[$1] = 1; next }
+    $1 in requested { print $1 "\t" $2 }
+  ' "$workspace/requested" "$manifest" > "$workspace/candidates"
+
+  local id relpath
+  while IFS=$'\t' read -r id relpath; do
+    [ -z "$id" ] && continue
+    [ -f "$notes_dir/$relpath" ] || continue
+    printf '%s\t%s\t%s/%s\n' "$id" "$relpath" "$notes_rel" "$id" >> "$workspace/records"
+    printf '%s/%s\n' "$notes_rel" "$relpath" >> "$workspace/raw-in"
+    tracked_paths+=("$notes_rel/$id")
+  done < "$workspace/candidates"
+
+  if [ ! -s "$workspace/records" ]; then
+    rm -rf "$workspace"
+    return 0
+  fi
+
+  if ! git -C "$repo_root" hash-object --no-filters --stdin-paths \
+    < "$workspace/raw-in" > "$workspace/raw-out"; then
+    rm -rf "$workspace"
+    return 1
+  fi
+  if ! git -C "$repo_root" -c core.quotePath=false ls-files --stage -- \
+    "${tracked_paths[@]}" > "$workspace/index-out"; then
+    rm -rf "$workspace"
+    return 1
+  fi
+
+  awk -F '\t' \
+    -v index_file="$workspace/index-out" \
+    -v records_file="$workspace/records" \
+    -v raw_file="$workspace/raw-out" '
+      FILENAME == index_file {
+        split($1, metadata, " ")
+        tracked[$2] = metadata[2]
+        next
+      }
+      FILENAME == records_file {
+        if ((getline raw < raw_file) <= 0) exit 1
+        if ($3 in tracked && raw != "") {
+          print $1 "\t" $2 "\t" tracked[$3] "\t" raw
+        }
+      }
+    ' "$workspace/index-out" "$workspace/records" || {
+      rm -rf "$workspace"
+      return 1
+    }
+
+  rm -rf "$workspace"
+}
+
+_record_deobfuscation_base_hashes() {
+  local notes_dir="$1"
+  shift
+  local state rows
+  state=$(_deobfuscation_state_file "$notes_dir") || return 0
+  rows=$(mktemp) || return 1
+
+  if ! _calculate_deobfuscation_state_rows "$notes_dir" "$@" > "$rows"; then
+    rm -f "$rows"
+    return 1
+  fi
+  if [ ! -s "$rows" ]; then
+    rm -f "$rows"
+    return 0
+  fi
+
   mkdir -p "$(dirname "$state")"
   touch "$state"
 
-  # Append-only on purpose: O_APPEND under PIPE_BUF is atomic, so concurrent
-  # writers get out-of-order rows but never torn ones, and the lookup helper
-  # takes the last matching entry. Don't "fix" this back to tmp+mv -- that's
-  # the read-modify-write race we're avoiding.
-  for id in "${ids[@]}"; do
-    local relpath sha
-    relpath=$(manifest_name_for_id "$manifest" "$id")
-    [ -z "$relpath" ] && continue
-    [ -f "$notes_dir/$relpath" ] || continue
-    sha=$(git -C "$repo_root" hash-object -- "$notes_dir/$relpath") || return 1
-    printf '%s\t%s\t%s\n' "$id" "$relpath" "$sha" >> "$state"
-  done
+  # Append one complete row at a time. Each row stays below PIPE_BUF, preserving
+  # the concurrent append contract while newer rows shadow older formats.
+  local row
+  while IFS= read -r row; do
+    [ -n "$row" ] && printf '%s\n' "$row" >> "$state"
+  done < "$rows"
+
+  rm -f "$rows"
 }
 
 # Rename a single obfuscated ID back to its readable name.
@@ -289,12 +373,20 @@ _rename_one_to_readable() {
   [ ! -d "$target_dir" ] && mkdir -p "$target_dir"
 
   if [ -e "$notes_dir/$relpath" ] && ! cmp -s "$notes_dir/$id" "$notes_dir/$relpath"; then
-    local current_hash base_hash state_file dirty_readable=false
+    local current_hash base_hash base_raw_hash state_file dirty_readable=false
     state_file=$(_deobfuscation_state_file "$notes_dir" 2>/dev/null) || state_file=""
-    if ! current_hash=$(git -C "$notes_dir" hash-object -- "$notes_dir/$relpath" 2>/dev/null); then
-      current_hash=""
+    base_raw_hash=$(_deobfuscation_base_raw_hash_for_id "$notes_dir" "$id")
+    if [ -n "$base_raw_hash" ]; then
+      base_hash="$base_raw_hash"
+      if ! current_hash=$(git -C "$notes_dir" hash-object --no-filters -- "$notes_dir/$relpath" 2>/dev/null); then
+        current_hash=""
+      fi
+    else
+      base_hash=$(_deobfuscation_base_hash_for_id "$notes_dir" "$id")
+      if ! current_hash=$(git -C "$notes_dir" hash-object -- "$notes_dir/$relpath" 2>/dev/null); then
+        current_hash=""
+      fi
     fi
-    base_hash=$(_deobfuscation_base_hash_for_id "$notes_dir" "$id")
 
     # No state file (fresh clone or pre-safety upgrade) -> trust the readable
     # and let the rename proceed. Force-prompting on every file would train
