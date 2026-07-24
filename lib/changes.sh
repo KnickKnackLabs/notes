@@ -33,16 +33,8 @@ _prepare_change_detection_workspace() {
 
   : > "$workspace/head-in"
   : > "$workspace/raw-in"
-  : > "$workspace/detected"
-  : > "$workspace/fallback-in"
-  : > "$workspace/fallback-meta"
-  : > "$workspace/fallback-out"
   : > "$workspace/manifest-ids"
   : > "$workspace/manifest-names"
-  : > "$workspace/stale-readables"
-  : > "$workspace/all-files"
-  : > "$workspace/tracked-attr-in"
-  : > "$workspace/readable-attr-in"
 
   while IFS=$'\t' read -r id relpath; do
     [ -z "$id" ] && continue
@@ -63,6 +55,8 @@ _prepare_change_detection_workspace() {
         done > "$workspace/stale-readables"; then
       :
     fi
+  else
+    : > "$workspace/stale-readables"
   fi
 
   git -C "$repo_root" cat-file --batch-check='%(objectname)' \
@@ -108,6 +102,11 @@ _classify_manifest_changes() {
   local abs_notes_dir="$1" notes_dir="$2" workspace="$3"
   local manifest="$abs_notes_dir/.manifest"
   local id relpath readable_file head_hash head_exists state_pair state_tracked state_raw raw_hash
+
+  : > "$workspace/fallback-in"
+  : > "$workspace/fallback-meta"
+  : > "$workspace/tracked-attr-in"
+  : > "$workspace/readable-attr-in"
 
   exec 3< "$workspace/head-out"
   exec 4< "$workspace/raw-out"
@@ -237,6 +236,7 @@ detect_changes() {
   local notes_dir="$RESOLVED_NOTES_DIR"
   local workspace
   workspace=$(mktemp -d) || return
+  : > "$workspace/detected"
 
   if ! _prepare_change_detection_workspace "$abs_notes_dir" "$repo_root" "$notes_dir" "$workspace"; then
     rm -rf "$workspace"
