@@ -1,62 +1,19 @@
 #!/usr/bin/env bash
-#MISE description="Run test suite"
-#MISE hide=true
-#USAGE arg "[args]" var=#true default="" help="Test files or bats flags (e.g., test/obfuscate.bats, --filter 'pattern')"
-#USAGE example "mise run test" header="Run all tests"
+#MISE description="Run BATS and Python tests"
+#MISE dir="{{config_root}}"
+#USAGE arg "[args]" var=#true default="" help="Test suites, Python files, or BATS arguments"
+#USAGE example "mise run test" header="Run all BATS and Python tests"
 #USAGE example "mise run test list" header="Run test/list.bats"
-#USAGE example "mise run test --filter rejects" header="Filter tests by name"
+#USAGE example "mise run test test/python/test_audit.py" header="Run one Python test file"
+#USAGE example "mise run test --filter rejects" header="Filter BATS tests by name"
+#USAGE example "mise run test --jobs 1" header="Run BATS serially for debugging"
 set -euo pipefail
 
-REPO_DIR="${MISE_CONFIG_ROOT:?MISE_CONFIG_ROOT not set}"
-TEST_DIR="$REPO_DIR/test"
-
-args=()
+arguments=()
 if [ -n "${usage_args:-}" ]; then
-  while IFS= read -r arg; do
-    [ -z "$arg" ] && continue
-    args+=("$arg")
-  done < <(printf '%s' "${usage_args}" | xargs printf '%s\n')
+  while IFS= read -r argument; do
+    [ -z "$argument" ] || arguments+=("$argument")
+  done < <(printf '%s' "$usage_args" | xargs printf '%s\n')
 fi
 
-bats_args=()
-pytest_args=()
-has_bats_target=false
-has_pytest_target=false
-has_bats_flag=false
-
-for arg in ${args[@]+"${args[@]}"}; do
-  if [[ "$arg" == -* ]]; then
-    has_bats_flag=true
-    bats_args+=("$arg")
-  elif [[ "$arg" == *.py || "$arg" == test/python/* || "$arg" == "$TEST_DIR/python/"* ]]; then
-    pytest_args+=("$arg")
-    has_pytest_target=true
-  elif [[ "$arg" != *.bats && -f "$TEST_DIR/$arg.bats" ]]; then
-    bats_args+=("$TEST_DIR/$arg.bats")
-    has_bats_target=true
-    if [ -f "$TEST_DIR/python/test_${arg}.py" ]; then
-      pytest_args+=("$TEST_DIR/python/test_${arg}.py")
-      has_pytest_target=true
-    fi
-  else
-    [[ "$arg" == *.bats || -d "$arg" ]] && has_bats_target=true
-    bats_args+=("$arg")
-  fi
-done
-
-if [ ${#args[@]} -eq 0 ]; then
-  bats_args+=("$TEST_DIR/")
-  pytest_args+=("$TEST_DIR/python")
-elif ! $has_bats_target && ! $has_pytest_target; then
-  bats_args+=("$TEST_DIR/")
-fi
-
-if [ ${#bats_args[@]} -gt 0 ] && ! $has_pytest_target; then
-  bats --jobs 8 --parallel-binary-name rush ${bats_args[@]+"${bats_args[@]}"}
-elif [ ${#bats_args[@]} -gt 0 ] && ! $has_bats_flag; then
-  bats --jobs 8 --parallel-binary-name rush ${bats_args[@]+"${bats_args[@]}"}
-fi
-
-if [ ${#pytest_args[@]} -gt 0 ]; then
-  uv run --with pytest pytest ${pytest_args[@]+"${pytest_args[@]}"}
-fi
+exec "$MISE_CONFIG_ROOT/libexec/test" ${arguments[@]+"${arguments[@]}"}
