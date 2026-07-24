@@ -131,6 +131,7 @@ notes diff HEAD~1..HEAD`}</CodeBlock>
         <Item>Join an existing encrypted repo with <Code>notes setup --yes --unlock</Code>.</Item>
         <Item><Code>setup</Code>, <Code>lock</Code>, <Code>install-hooks</Code>, and <Code>unlock --force</Code> require explicit confirmation.</Item>
         <Item>Prefer <Code>notes commit</Code> for note-only work; use <Code>notes stage</Code> when you need manual Git control.</Item>
+        <Item>Before publishing a ref, run <Code>notes verify-blobs --ref HEAD --strict</Code> to prove its managed blobs are encrypted and local note changes are absent.</Item>
         <Item><Code>notes lock</Code> currently locks every git-crypt path in the repository, not only <Code>notes/</Code>.</Item>
         <Item>Use <Code>notes conflicts</Code> or <Code>notes merge --dry-run</Code> to materialize readable conflict artifacts.</Item>
       </List>
