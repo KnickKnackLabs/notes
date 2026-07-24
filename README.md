@@ -1,128 +1,79 @@
+<div align="center">
+
+<img src="assets/manly-love.webp" alt="Graffiti reading: For manly love be here March 25th at 2:15 AM sharp" width="800" />
+
 # notes
 
 **Collective memory, encrypted.**
 
-`notes` is a small CLI for keeping Markdown notes in a Git repo while protecting the private parts with `git-crypt`. It handles the boring-but-dangerous edges around encryption setup, collaborator keys, filename obfuscation, and staging files that Git would otherwise hide from you.
+[![tests: 397](https://img.shields.io/badge/tests-397-brightgreen?style=flat)](test/)
+![lints: 8](https://img.shields.io/badge/lints-8-blue?style=flat)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue?style=flat)](LICENSE)
 
-The shape is intentionally simple: write normal Markdown in `notes/`, let the tool keep encrypted filenames safe for GitHub, and use explicit commands when crossing encryption boundaries.
+</div>
 
-## Quick start
+Write normal Markdown under `notes/`. Notes keeps readable names in your working tree while Git stores encrypted content under opaque filenames. Explicit commands handle the moments where those two views meet: setup, review, staging, commits, and conflicts.
 
-```sh
-# One-time setup in a Git repo. This mutates encryption config and hooks.
+## Install
+
+Install the command for your user:
+
+```bash
+shiv install notes
+```
+
+Or declare it for a project:
+
+```toml
+[plugins]
+shiv = "https://github.com/KnickKnackLabs/vfox-shiv"
+
+[tools]
+"shiv:notes" = "0.8"
+```
+
+```bash
+mise install
+```
+
+## Run
+
+```bash
+# Initialize encrypted notes and install the Git hooks.
 notes setup --yes
 
-# Add a note with YAML frontmatter.
+# Work with ordinary Markdown.
 notes new --slug project-plan --title "Project plan" --tags planning
+notes search "project plan"
 
-# See note metadata, search notes, and show one note.
-notes list
-notes search "workflow"
-notes show project-plan
-
-# Parse convention-aware components without changing raw Markdown reads.
-notes parse notes/project-plan.md
-
-# Check encryption + obfuscation state.
-notes status
-
-# Verify committed note blobs are encrypted before publication.
-notes verify-blobs --ref HEAD
-
-# Commit changed notes through notes' obfuscation/exclude rules.
-notes commit -m "notes: update project plan" notes/project-plan.md
-```
-
-For an existing encrypted repo:
-
-```sh
-notes setup --yes --unlock
-notes status
-```
-
-## Daily workflow
-
-```sh
-# Show note changes against HEAD.
-notes changes
+# Review and commit through the readable/obfuscated boundary.
 notes changes --summary
-
-# Query notes by metadata or content.
-notes list --type skill
-notes search "review capacity" --tag workflow
-notes show project-plan --json
-notes parse notes/project-plan.md
-
-# Show readable diffs for local changes, refs, or PRs.
-notes diff
-notes diff main...HEAD
-notes diff --pr 109 --out /tmp/notes-109-review
-
-# Verify a committed ref has only encrypted note blobs.
-notes verify-blobs --ref HEAD
-notes verify-blobs --ref HEAD --strict
-
-# Inspect unresolved encrypted-note merge conflicts without resolving them.
-notes conflicts --out /tmp/notes-conflicts
-notes merge --dry-run --out /tmp/notes-conflicts
-
-# Commit changed notes. Scope is explicit: pass paths or --all.
-notes commit -m "notes: update project plan" notes/project-plan.md
-notes commit --all -m "notes: update garden"
-
-# Low-level staging remains available when you need manual Git control.
-notes stage notes/new-note.md
-notes stage --all
-
-# Re-encrypt local files before handoff or archival.
-notes lock --yes
-
-# Decrypt again when you need to work locally.
-notes unlock
+notes commit -m "notes: add project plan" notes/project-plan.md
+notes diff HEAD~1..HEAD
 ```
 
-`setup`, `lock`, `install-hooks`, and `unlock --force` require confirmation because they mutate repository encryption or hook state. In automation, pass `--yes` explicitly.
+<details>
+<summary><b>Operational notes</b></summary>
 
-## What notes manages
+- Join an existing encrypted repo with `notes setup --yes --unlock`.
+- `setup`, `lock`, `install-hooks`, and `unlock --force` require explicit confirmation.
+- Prefer `notes commit` for note-only work; use `notes stage` when you need manual Git control.
+- Before publishing a ref, run `notes verify-blobs --ref HEAD --strict` to prove its managed blobs are encrypted and local note changes are absent.
+- `notes lock` currently locks every git-crypt path in the repository, not only `notes/`.
+- Use `notes conflicts` or `notes merge --dry-run` to materialize readable conflict artifacts.
 
-- **Encryption setup** — initializes `git-crypt` through `rudi`, configures `.gitattributes`, and installs hooks.
-- **Collaborator access** — adds GPG keys to the repo's encrypted key material.
-- **Filename obfuscation** — stores notes with opaque filenames in Git while restoring readable names locally.
-- **Manifest merging** — uses a custom merge driver for `notes/.manifest` so concurrent note additions can merge cleanly.
-- **Safe commits/staging** — commits or stages notes despite local exclude/assume-unchanged rules used for readable working copies.
-- **Readable review diffs** — materializes obfuscated note refs/PRs as readable Markdown and emits a normal patch.
-- **Readable conflict artifacts** — detects unmerged encrypted/obfuscated note content and writes base/ours/theirs Markdown files for manual resolution.
-- **Convention-aware parsing** — `notes parse <file>` returns JSON components for frontmatter and body without changing raw Markdown compatibility.
-- **Wikilink graph telemetry** — `notes audit` reports inbound/outbound link counts per note and surfaces broken `[[targets]]`. Generic; layered analyses (e.g. pattern maturity) consume the `--json` output.
+</details>
 
-## Important gotchas
+## Documentation
 
-- `notes lock` currently re-encrypts **all git-crypt files in the repo**, not just `notes/` files. This is a `rudi` limitation tracked separately.
-- Prefer `notes commit` for note-only commits. Use `notes stage <path>` or `notes stage --all` only when you need manual Git control; readable note names are intentionally excluded locally.
-- After pulling shared note repos, inspect `notes status` and `notes changes --summary` before committing follow-up changes.
-- `notes unlock` / `notes deobfuscate` reconcile stale readable files left by upstream note deletion or rename. Clean generated stale files are removed; dirty or unproven stale files are moved to `.git/info/notes-stale-readable/` so they cannot be accidentally staged as new notes.
-- `notes parse` is a parser/query foundation for existing Markdown/frontmatter conventions. Raw Markdown reads remain valid; future conventions should settle separately before they become parser output.
+Run `notes --help` for the complete command surface. See [CONTRIBUTING.md](CONTRIBUTING.md) for repository structure, encryption safety boundaries, and validation.
 
-## Development
+<div align="center">
 
-```sh
-gh repo clone KnickKnackLabs/notes
-cd notes
-mise trust
-mise install
-mise run doctor
-mise run test
-```
+---
 
-`mise run doctor` checks the configured codebase conventions and reports the
-optional clone-local pre-commit hook. See [CONTRIBUTING.md](CONTRIBUTING.md) for
-the repository structure, encryption safety boundaries, and full validation
-workflow.
+<sub>
+Tiny encrypted filing cabinet, very serious about labels.<br />
 
-The test suite is BATS-based. Target a subset with:
-
-```sh
-mise run test test/encrypt.bats test/integration.bats
-```
-
-Tiny encrypted filing cabinet, very serious about labels.
+Generated with <a href="https://github.com/KnickKnackLabs/readme">readme</a>
+</sub></div>

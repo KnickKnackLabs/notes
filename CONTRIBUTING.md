@@ -11,13 +11,15 @@ simple.
 notes/
 ├── .github/workflows/ # Hosted macOS and Linux validation
 ├── .mise/tasks/       # Public CLI commands and task-local orchestration
+├── assets/            # Public README artwork
 ├── hooks/             # Installed Git hook components and templates
 ├── lib/               # Shared Bash and Python domain logic
 ├── libexec/test       # Canonical mixed BATS/Python test workflow
 ├── test/              # BATS behavior and integration tests
 ├── test/python/       # Focused Python tests
 ├── mise.toml          # Tools, settings, and convention lint configuration
-└── README.md          # User-facing command and workflow reference
+├── README.tsx         # Programmable README source
+└── README.md          # Generated user-facing introduction
 ```
 
 Task scripts may use `$MISE_CONFIG_ROOT`. Shared libraries must locate their
@@ -32,6 +34,13 @@ mise trust
 mise install
 mise run doctor
 mise run test
+```
+
+Edit `README.tsx`, then regenerate and verify the checked-in Markdown with:
+
+```bash
+readme build
+readme build --check
 ```
 
 The optional local convention hook is clone-local. Install it when useful:
@@ -83,6 +92,7 @@ Before opening or updating a PR, run the checks that prove the touched surface:
 mise run doctor
 mise run test
 codebase lint "$PWD"
+readme build --check
 git diff --check
 ```
 

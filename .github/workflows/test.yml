@@ -52,3 +52,8 @@ jobs:
 
       - name: Run codebase lints
         run: codebase lint "$PWD"
+
+      - name: Check generated README
+        uses: KnickKnackLabs/readme@v0.3.1
+        with:
+          check: true

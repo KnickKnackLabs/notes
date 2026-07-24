@@ -13,6 +13,7 @@ uv = "0.11.19"
 "aqua:shenwei356/rush" = "0.9.0"
 "shiv:rudi" = "0.5"
 "shiv:codebase" = "0.4"
+"shiv:readme" = "0.3"
 # git-crypt has no macOS binary on GitHub releases.
 # macOS: brew install git-crypt
 # Linux: downloaded from GitHub releases by rudi install
