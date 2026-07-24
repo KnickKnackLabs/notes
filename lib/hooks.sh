@@ -3,6 +3,7 @@
 
 HOOKS_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HOOKS_REPO_DIR="$(cd "$HOOKS_LIB_DIR/.." && pwd)"
+HOOKS_DIR="$HOOKS_REPO_DIR/hooks"
 
 _hook_template_value() {
   printf '%s' "$1" | sed 's/[&|\\]/\\&/g'

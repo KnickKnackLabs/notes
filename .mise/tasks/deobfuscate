@@ -138,13 +138,13 @@ if [ ${#suppressed_ids[@]} -gt 0 ]; then
     || echo "Warning: failed to record deobfuscation base hashes" >&2
 fi
 
-if [ $rc -ne 0 ] && [ $rc -ne 2 ]; then
+if [ "$rc" -ne 0 ] && [ "$rc" -ne 2 ]; then
   echo "Error: deobfuscation failed after restoring $restored file(s)" >&2
-  exit $rc
+  exit "$rc"
 fi
 
 stale_total=$((removed_stale + quarantined_stale))
-if [ $rc -eq 2 ] && [ "$restored" -eq 0 ] && [ "$stale_total" -eq 0 ]; then
+if [ "$rc" -eq 2 ] && [ "$restored" -eq 0 ] && [ "$stale_total" -eq 0 ]; then
   echo "Nothing to deobfuscate."
   exit 0
 fi

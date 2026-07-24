@@ -87,12 +87,12 @@ fi
 # Exit codes: 0=success, 2=nothing to do, 1=error
 # Use && rc=0 || rc=$? to capture exit code without triggering errexit.
 output=$(rename_to_obfuscated "$abs_notes_dir" ${ARGS[@]+"${ARGS[@]}"}) && rc=0 || rc=$?
-if [ $rc -eq 2 ]; then
+if [ "$rc" -eq 2 ]; then
   echo "Nothing to obfuscate."
   exit 0
-elif [ $rc -ne 0 ]; then
+elif [ "$rc" -ne 0 ]; then
   echo "Error: obfuscation failed" >&2
-  exit $rc
+  exit "$rc"
 fi
 
 manifest_entry_matches_head() {

@@ -354,6 +354,8 @@ rename_to_readable() {
       esac
     done
   else
+    # The helper moves note files but does not modify the manifest being read.
+    # shellcheck disable=SC2094
     while IFS=$'\t' read -r id relpath; do
       [ -z "$id" ] && continue
       local _rc

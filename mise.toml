@@ -25,6 +25,7 @@ lint = [
   "mcr-scope",
   "caller-pwd-contract",
   "or-true",
+  "shellcheck",
   "gum-table",
   "github-actions",
 ]

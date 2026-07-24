@@ -76,6 +76,8 @@ _notes_conflict_lookup_readable_name() {
   if ! _notes_conflict_manifest_stage_to_file "$repo_root" "$notes_dir" 3 "$candidates"; then :; fi
   if ! _notes_conflict_manifest_stage_to_file "$repo_root" "$notes_dir" 1 "$candidates"; then :; fi
 
+  # Unsafe input unlinks temp files only while aborting; the open reader stays valid.
+  # shellcheck disable=SC2094
   while IFS=$'\t' read -r entry_id entry_name _extra; do
     [ "$entry_id" = "$id" ] || continue
     if ! _notes_conflict_guard_readable_path "$entry_name"; then

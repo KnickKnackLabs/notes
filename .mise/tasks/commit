@@ -92,7 +92,7 @@ require_no_preexisting_staged_changes() {
   staged=$(git -C "$TARGET_DIR" diff --cached --name-only)
   if [ -n "$staged" ]; then
     echo "Error: staged changes already exist; refusing to mix them into notes commit." >&2
-    echo "$staged" | sed 's/^/  /' >&2
+    printf '  %s\n' "${staged//$'\n'/$'\n  '}" >&2
     echo "Commit or unstage them first, then retry." >&2
     exit 1
   fi
@@ -147,7 +147,7 @@ verify_no_staged_residue() {
   staged=$(git -C "$TARGET_DIR" diff --cached --name-only)
   if [ -n "$staged" ]; then
     echo "Error: staged changes remain after notes commit:" >&2
-    echo "$staged" | sed 's/^/  /' >&2
+    printf '  %s\n' "${staged//$'\n'/$'\n  '}" >&2
     return 1
   fi
 }
