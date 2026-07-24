@@ -247,7 +247,7 @@ _deobfuscation_readable_matches_base_ref() {
   return 1
 }
 
-_record_deobfuscation_base_hashes() {
+_calculate_deobfuscation_state_rows() {
   local notes_dir="$1"
   shift
   local ids=("$@")
@@ -258,55 +258,47 @@ _record_deobfuscation_base_hashes() {
   resolve_notes_dir "$notes_dir" || return 0
   local repo_root="$RESOLVED_REPO_ROOT"
   local notes_rel="$RESOLVED_NOTES_DIR"
-  local state="$repo_root/.git/info/notes-obfuscation-state"
-  local tmp_dir requested candidates records raw_in raw_out index_out rows
+  local workspace
   local tracked_paths=()
-  tmp_dir=$(mktemp -d) || return 1
-  requested="$tmp_dir/requested"
-  candidates="$tmp_dir/candidates"
-  records="$tmp_dir/records"
-  raw_in="$tmp_dir/raw-in"
-  raw_out="$tmp_dir/raw-out"
-  index_out="$tmp_dir/index-out"
-  rows="$tmp_dir/rows"
-  printf '%s\n' "${ids[@]}" > "$requested"
-  : > "$records"
-  : > "$raw_in"
+  workspace=$(mktemp -d) || return 1
+  printf '%s\n' "${ids[@]}" > "$workspace/requested"
+  : > "$workspace/records"
+  : > "$workspace/raw-in"
 
   awk -F '\t' '
     FNR == NR { requested[$1] = 1; next }
     $1 in requested { print $1 "\t" $2 }
-  ' "$requested" "$manifest" > "$candidates"
+  ' "$workspace/requested" "$manifest" > "$workspace/candidates"
 
   local id relpath
   while IFS=$'\t' read -r id relpath; do
     [ -z "$id" ] && continue
     [ -f "$notes_dir/$relpath" ] || continue
-    printf '%s\t%s\t%s/%s\n' "$id" "$relpath" "$notes_rel" "$id" >> "$records"
-    printf '%s/%s\n' "$notes_rel" "$relpath" >> "$raw_in"
+    printf '%s\t%s\t%s/%s\n' "$id" "$relpath" "$notes_rel" "$id" >> "$workspace/records"
+    printf '%s/%s\n' "$notes_rel" "$relpath" >> "$workspace/raw-in"
     tracked_paths+=("$notes_rel/$id")
-  done < "$candidates"
+  done < "$workspace/candidates"
 
-  if [ ! -s "$records" ]; then
-    rm -rf "$tmp_dir"
+  if [ ! -s "$workspace/records" ]; then
+    rm -rf "$workspace"
     return 0
   fi
 
   if ! git -C "$repo_root" hash-object --no-filters --stdin-paths \
-    < "$raw_in" > "$raw_out"; then
-    rm -rf "$tmp_dir"
+    < "$workspace/raw-in" > "$workspace/raw-out"; then
+    rm -rf "$workspace"
     return 1
   fi
   if ! git -C "$repo_root" -c core.quotePath=false ls-files --stage -- \
-    "${tracked_paths[@]}" > "$index_out"; then
-    rm -rf "$tmp_dir"
+    "${tracked_paths[@]}" > "$workspace/index-out"; then
+    rm -rf "$workspace"
     return 1
   fi
 
   awk -F '\t' \
-    -v index_file="$index_out" \
-    -v records_file="$records" \
-    -v raw_file="$raw_out" '
+    -v index_file="$workspace/index-out" \
+    -v records_file="$workspace/records" \
+    -v raw_file="$workspace/raw-out" '
       FILENAME == index_file {
         split($1, metadata, " ")
         tracked[$2] = metadata[2]
@@ -318,10 +310,29 @@ _record_deobfuscation_base_hashes() {
           print $1 "\t" $2 "\t" tracked[$3] "\t" raw
         }
       }
-    ' "$index_out" "$records" > "$rows" || {
-      rm -rf "$tmp_dir"
+    ' "$workspace/index-out" "$workspace/records" || {
+      rm -rf "$workspace"
       return 1
     }
+
+  rm -rf "$workspace"
+}
+
+_record_deobfuscation_base_hashes() {
+  local notes_dir="$1"
+  shift
+  local state rows
+  state=$(_deobfuscation_state_file "$notes_dir") || return 0
+  rows=$(mktemp) || return 1
+
+  if ! _calculate_deobfuscation_state_rows "$notes_dir" "$@" > "$rows"; then
+    rm -f "$rows"
+    return 1
+  fi
+  if [ ! -s "$rows" ]; then
+    rm -f "$rows"
+    return 0
+  fi
 
   mkdir -p "$(dirname "$state")"
   touch "$state"
@@ -333,7 +344,7 @@ _record_deobfuscation_base_hashes() {
     [ -n "$row" ] && printf '%s\n' "$row" >> "$state"
   done < "$rows"
 
-  rm -rf "$tmp_dir"
+  rm -f "$rows"
 }
 
 # Rename a single obfuscated ID back to its readable name.
