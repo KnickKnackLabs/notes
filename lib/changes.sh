@@ -39,7 +39,7 @@ detect_changes() {
   local repo_root="$RESOLVED_REPO_ROOT"
   local notes_dir="$RESOLVED_NOTES_DIR"
 
-  local tmp_dir head_in head_out disk_in disk_out manifest_ids manifest_names stale_readables
+  local tmp_dir head_in head_out disk_in disk_out manifest_ids manifest_names stale_readables all_files
   local tracked_attr_in readable_attr_in tracked_attr_out readable_attr_out
   tmp_dir=$(mktemp -d) || return
   head_in="$tmp_dir/head-in"
@@ -49,6 +49,7 @@ detect_changes() {
   manifest_ids="$tmp_dir/manifest-ids"
   manifest_names="$tmp_dir/manifest-names"
   stale_readables="$tmp_dir/stale-readables"
+  all_files="$tmp_dir/all-files"
   tracked_attr_in="$tmp_dir/tracked-attr-in"
   readable_attr_in="$tmp_dir/readable-attr-in"
   tracked_attr_out="$tmp_dir/tracked-attr-out"
@@ -58,6 +59,7 @@ detect_changes() {
   : > "$manifest_ids"
   : > "$manifest_names"
   : > "$stale_readables"
+  : > "$all_files"
   : > "$tracked_attr_in"
   : > "$readable_attr_in"
 
@@ -167,29 +169,36 @@ detect_changes() {
   exec 3<&-
   exec 4<&-
 
-  # Scan for new files not yet in the manifest.
-  while IFS= read -r f; do
-    [ ! -f "$f" ] && continue
-    local relpath="${f#"$abs_notes_dir"/}"
-    [[ "$relpath" == ".manifest" ]] && continue
+  # Classify files not represented by the current manifest in one set pass.
+  # Per-file grep and basename processes dominate this path at repository scale.
+  if ! find "$abs_notes_dir" -type f | sort > "$all_files"; then
+    rm -rf "$tmp_dir"
+    return
+  fi
+  awk \
+    -v ids_file="$manifest_ids" \
+    -v names_file="$manifest_names" \
+    -v stale_file="$stale_readables" \
+    -v files_file="$all_files" \
+    -v root="$abs_notes_dir/" '
+      FILENAME == ids_file   { ids[$0] = 1; next }
+      FILENAME == names_file { names[$0] = 1; next }
+      FILENAME == stale_file { stale[$0] = 1; next }
+      FILENAME == files_file {
+        relpath = substr($0, length(root) + 1)
+        if (relpath == ".manifest") next
 
-    # Skip obfuscated IDs that are in the manifest.
-    local base
-    base=$(basename "$relpath")
-    grep -Fxq "$base" "$manifest_ids" && continue
+        count = split(relpath, parts, "/")
+        base = parts[count]
+        if (base in ids || relpath in names) next
 
-    # Skip files already in the manifest by readable name.
-    grep -Fxq "$relpath" "$manifest_names" && continue
-
-    # Stale generated readables are a reconciliation issue, not author intent.
-    if grep -Fxq "$relpath" "$stale_readables"; then
-      printf 'stale-readable\t%s\n' "$relpath"
-      continue
-    fi
-
-    # This is a genuinely new file.
-    printf 'new\t%s\n' "$relpath"
-  done < <(find "$abs_notes_dir" -type f | sort)
+        if (relpath in stale) {
+          print "stale-readable\t" relpath
+        } else {
+          print "new\t" relpath
+        }
+      }
+    ' "$manifest_ids" "$manifest_names" "$stale_readables" "$all_files"
 
   rm -rf "$tmp_dir"
 }
