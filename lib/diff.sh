@@ -143,23 +143,49 @@ _changed_note_ids_between_refs() {
   done < "$changed_paths"
 
   awk -F '\t' '
+    function manifest_path(row) {
+      return substr(row, index(row, FS) + 1)
+    }
     FILENAME == ARGV[1] { selected_id[$1] = 1; next }
     FILENAME == ARGV[2] {
+      path = manifest_path($0)
       base_row[$0] = 1
       row_id[$0] = $1
+      base_path[path] = 1
+      base_order[path, ++base_count[path]] = $1
       edge_id[++edge_count] = $1
-      edge_path[edge_count] = $2
+      edge_path[edge_count] = path
       next
     }
     {
+      path = manifest_path($0)
       head_row[$0] = 1
       row_id[$0] = $1
+      head_path[path] = 1
+      head_order[path, ++head_count[path]] = $1
       edge_id[++edge_count] = $1
-      edge_path[edge_count] = $2
+      edge_path[edge_count] = path
     }
     END {
       for (row in base_row) if (!(row in head_row)) selected_id[row_id[row]] = 1
       for (row in head_row) if (!(row in base_row)) selected_id[row_id[row]] = 1
+
+      # Exact row sets do not capture order. When IDs collide on one readable
+      # path, their manifest order decides which blob materialization leaves
+      # behind. Select every ID on paths whose order changed.
+      for (path in base_path) compared_path[path] = 1
+      for (path in head_path) compared_path[path] = 1
+      for (path in compared_path) {
+        order_changed = (base_count[path] != head_count[path])
+        count = base_count[path] > head_count[path] ? base_count[path] : head_count[path]
+        for (i = 1; !order_changed && i <= count; i++) {
+          if (base_order[path, i] != head_order[path, i]) order_changed = 1
+        }
+        if (order_changed) {
+          for (i = 1; i <= base_count[path]; i++) selected_id[base_order[path, i]] = 1
+          for (i = 1; i <= head_count[path]; i++) selected_id[head_order[path, i]] = 1
+        }
+      }
 
       # A malformed or merge-produced manifest can alias one ID to multiple
       # paths, or multiple IDs to one path. Pull in the entire affected
