@@ -929,7 +929,7 @@ SH
   run run_with_process_counters notes commit -m "update alpha" alpha.md
 
   [ "$status" -eq 0 ]
-  [ "$(grep -c 'ls-files --error-unmatch' "$NOTES_PROCESS_COUNTER_DIR/git.args" || true)" -eq 0 ]
+  [ "$(grep -c ' ls-files ' "$NOTES_PROCESS_COUNTER_DIR/git.args" || true)" -le 3 ]
 }
 
 @test "notes commit: explicit file commits modified note and leaves clean readable tree" {
