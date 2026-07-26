@@ -236,20 +236,29 @@ detect_double_tracked_notes() {
   local repo_root="${1:?usage: detect_double_tracked_notes <repo_root> <notes_dir_rel>}"
   local notes_dir_rel="${2:?usage: detect_double_tracked_notes <repo_root> <notes_dir_rel>}"
   local manifest="$repo_root/$notes_dir_rel/.manifest"
-  local tracked_paths rc
+  local workspace snapshot tracked_paths tracked_path rc
   [ ! -f "$manifest" ] && return 0
 
-  tracked_paths=$(mktemp) || return 1
-  if ! git -C "$repo_root" -c core.quotePath=false ls-files -- "$notes_dir_rel" > "$tracked_paths"; then
-    rm -f "$tracked_paths"
+  workspace=$(mktemp -d) || return 1
+  snapshot="$workspace/snapshot"
+  tracked_paths="$workspace/tracked-paths"
+  if ! git -C "$repo_root" ls-files -z -- "$notes_dir_rel" > "$snapshot"; then
+    rm -rf "$workspace"
     return 1
   fi
+
+  # Git quotes backslashes, quotes, and control characters in line-delimited
+  # output even with core.quotePath=false. Read its NUL-delimited snapshot and
+  # normalize the manifest-representable paths without starting more processes.
+  while IFS= read -r -d '' tracked_path; do
+    printf '%s\n' "$tracked_path"
+  done < "$snapshot" > "$tracked_paths"
 
   awk -F '\t' -v tracked_file="$tracked_paths" -v prefix="$notes_dir_rel/" '
     FILENAME == tracked_file { tracked[$0] = 1; next }
     $1 != "" && ((prefix $2) in tracked) { print $1 "\t" $2 }
   ' "$tracked_paths" "$manifest"
   rc=$?
-  rm -f "$tracked_paths"
+  rm -rf "$workspace"
   return "$rc"
 }
