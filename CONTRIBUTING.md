@@ -67,11 +67,11 @@ classification and execution, while `test/setup_suite.bash` establishes the
 repo-local tool environment and deterministic fixture Git identity once per
 BATS invocation.
 
-Notes intentionally uses eight BATS workers, including within-file
-parallelism. Several suites contain many independent Git fixtures, so the
-starter template's four-job files-only default is materially slower here.
-Keep mutable fixtures under `$BATS_TEST_TMPDIR`; do not introduce shared test
-repositories, fixed temporary paths, or ambient signing dependencies.
+Notes uses eight BATS workers across test files. BATS does not parallelize the
+tests within one file, so split large suites along coherent fixture and behavior
+boundaries when that exposes useful independent work. Keep mutable fixtures
+under `$BATS_TEST_TMPDIR`; do not introduce shared test repositories, fixed
+temporary paths, or ambient signing dependencies.
 
 ## Encryption and Git safety
 
