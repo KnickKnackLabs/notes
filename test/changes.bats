@@ -74,6 +74,21 @@ run_with_process_counters() {
   "$function_name" "$@"
 }
 
+setup_git_argument_counter() {
+  local real_git
+  PROCESS_COUNTER_BIN="$BATS_TEST_TMPDIR/git-counter-bin"
+  NOTES_PROCESS_COUNTER_DIR="$BATS_TEST_TMPDIR/git-counter-results"
+  real_git=$(command -v git)
+  mkdir -p "$PROCESS_COUNTER_BIN" "$NOTES_PROCESS_COUNTER_DIR"
+  export NOTES_PROCESS_COUNTER_DIR
+  cat > "$PROCESS_COUNTER_BIN/git" <<SH
+#!/usr/bin/env bash
+printf '%s\\n' "\$*" >> "\${NOTES_PROCESS_COUNTER_DIR:?}/git.args"
+exec '$real_git' "\$@"
+SH
+  chmod +x "$PROCESS_COUNTER_BIN/git"
+}
+
 setup_clean_filter_counter() {
   CLEAN_FILTER_CALLS="$BATS_TEST_TMPDIR/clean-filter.calls"
   CLEAN_FILTER="$BATS_TEST_TMPDIR/counting-clean-filter"
@@ -904,6 +919,18 @@ SH
 }
 
 # ── commit wrapper ───────────────────────────────────────────
+
+@test "notes commit post-check batches readable-path inspection" {
+  add_clean_numbered_notes 40
+  notes install-hooks --yes >/dev/null
+  printf '# changed\n' >> "$NOTES_CALLER_PWD/notes/alpha.md"
+  setup_git_argument_counter
+
+  run run_with_process_counters notes commit -m "update alpha" alpha.md
+
+  [ "$status" -eq 0 ]
+  [ "$(grep -c 'ls-files --error-unmatch' "$NOTES_PROCESS_COUNTER_DIR/git.args" || true)" -eq 0 ]
+}
 
 @test "notes commit: explicit file commits modified note and leaves clean readable tree" {
   notes install-hooks --yes

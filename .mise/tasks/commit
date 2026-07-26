@@ -99,13 +99,16 @@ require_no_preexisting_staged_changes() {
 }
 
 verify_no_readable_paths_tracked() {
-  local bad=() id relpath
+  local bad=() id relpath double_tracked
+  if ! double_tracked=$(detect_double_tracked_notes "$TARGET_DIR" "$notes_dir"); then
+    echo "Error: failed to inspect tracked readable note paths after commit." >&2
+    return 1
+  fi
+
   while IFS=$'\t' read -r id relpath; do
     [ -z "$id" ] && continue
-    if git -C "$TARGET_DIR" ls-files --error-unmatch -- "$notes_dir/$relpath" >/dev/null 2>&1; then
-      bad+=("$relpath")
-    fi
-  done < "$manifest"
+    bad+=("$relpath")
+  done <<< "$double_tracked"
 
   if [ ${#bad[@]} -gt 0 ]; then
     echo "Error: commit created tracked readable note path(s); repair before pushing:" >&2
