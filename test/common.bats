@@ -207,3 +207,21 @@ SH
   [ "$output" = $'00000017\tnote-17.md' ]
   [ "$(wc -l < "$calls" | tr -d ' ')" -eq 1 ]
 }
+
+@test "detect_double_tracked_notes matches Git-quoted readable paths literally" {
+  local backslash_name='back\slash.md'
+  local quote_name='double"quote.md'
+  git -C "$NOTES_CALLER_PWD" init -q
+
+  printf 'abc12345\t%s\ndef67890\t%s\n' "$backslash_name" "$quote_name" > "$MANIFEST"
+  printf '# Obfuscated\n' > "$NOTES_CALLER_PWD/notes/abc12345"
+  printf '# Obfuscated\n' > "$NOTES_CALLER_PWD/notes/def67890"
+  printf '# Readable\n' > "$NOTES_CALLER_PWD/notes/$backslash_name"
+  printf '# Readable\n' > "$NOTES_CALLER_PWD/notes/$quote_name"
+  git -C "$NOTES_CALLER_PWD" add -f notes
+
+  run detect_double_tracked_notes "$NOTES_CALLER_PWD" notes
+
+  [ "$status" -eq 0 ]
+  [ "$output" = $'abc12345\tback\\slash.md\ndef67890\tdouble"quote.md' ]
+}
