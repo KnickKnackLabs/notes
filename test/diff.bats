@@ -172,6 +172,32 @@ commit_readable_update() {
   ! grep -q "a/notes/beta.md" "$out_dir/readable.patch"
 }
 
+@test "notes diff rejects readable file and directory path collisions" {
+  local alpha_id beta_id manifest next_manifest
+  manifest="$NOTES_CALLER_PWD/notes/.manifest"
+  alpha_id=$(awk -F '\t' '$2 == "alpha.md" { print $1 }' "$manifest")
+  beta_id=$(awk -F '\t' '$2 == "beta.md" { print $1 }' "$manifest")
+  next_manifest="$BATS_TEST_TMPDIR/prefix-colliding.manifest"
+
+  {
+    printf '%s\tshared\n' "$alpha_id"
+    printf '%s\tshared/child.md\n' "$beta_id"
+  } > "$next_manifest"
+  mv "$next_manifest" "$manifest"
+  git -C "$NOTES_CALLER_PWD" add notes/.manifest
+  git -C "$NOTES_CALLER_PWD" commit -q -m "create readable path prefix collision"
+
+  echo "# Beta changed" > "$NOTES_CALLER_PWD/notes/$beta_id"
+  git -C "$NOTES_CALLER_PWD" add "notes/$beta_id"
+  git -C "$NOTES_CALLER_PWD" commit -q -m "edit colliding note"
+
+  run notes diff HEAD~1 HEAD
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"readable path is both a file and directory: shared"* ]]
+  [[ "$output" != *"# Beta changed"* ]]
+}
+
 @test "ref diff Git process count does not grow with unchanged notes" {
   local i real_git counter_bin calls git_call_count
   rename_to_readable "$NOTES_CALLER_PWD/notes" > /dev/null

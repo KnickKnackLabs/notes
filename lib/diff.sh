@@ -22,6 +22,32 @@ _guard_manifest_path() {
   esac
 }
 
+_validate_manifest_readable_paths() {
+  local ref="$1" manifest="$2"
+
+  awk -F '\t' -v ref="$ref" '
+    {
+      separator = index($0, FS)
+      path = substr($0, separator + 1)
+      paths[path] = 1
+    }
+    END {
+      invalid = 0
+      for (path in paths) {
+        ancestor = path
+        while (sub(/\/[^/]+$/, "", ancestor)) {
+          if (ancestor in paths) {
+            printf "Error: %s readable path is both a file and directory: %s\n", ref, ancestor > "/dev/stderr"
+            invalid = 1
+            break
+          }
+        }
+      }
+      exit invalid
+    }
+  ' "$manifest"
+}
+
 # Build and validate one ref's readable-name index without materializing note blobs.
 _prepare_readable_notes_ref_index() {
   local repo_root="$1" notes_dir="$2" ref="$3" manifest_out="$4"
@@ -106,6 +132,11 @@ _prepare_readable_notes_ref_index() {
         print count > unmapped
       }
     ' "$tree_ids" "$validated_manifest"
+
+  if ! _validate_manifest_readable_paths "$ref" "$manifest_out"; then
+    rm -f "$tree_paths" "$tree_ids" "$raw_manifest" "$validated_manifest" "$missing_manifest" "$unmapped_file"
+    return 1
+  fi
 
   while IFS=$'\t' read -r id relpath; do
     [ -z "$id" ] && continue
