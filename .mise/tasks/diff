@@ -2,7 +2,7 @@
 #MISE description="Show readable note diffs for the working tree, refs, or a PR"
 #USAGE flag "--dir <dir>" default="notes" help="Notes directory relative to repo root (default: notes)"
 #USAGE flag "--pr <number>" default="" help="Diff a GitHub PR from the current repo's origin remote"
-#USAGE flag "--out <dir>" default="" help="Write readable base/head trees and readable.patch to this directory"
+#USAGE flag "--out <dir>" default="" help="Write changed-note base/head artifacts and readable.patch to this directory"
 #USAGE arg "[refs]" var=#true default="" help="Optional ref/range: BASE HEAD, BASE..HEAD, or BASE...HEAD. Omit for working-tree diff against HEAD."
 set -euo pipefail
 
@@ -146,8 +146,13 @@ cleanup_out_dir() {
 trap 'cleanup_temp_refs; cleanup_out_dir' EXIT
 
 _prepare_diff_workspace "$out_dir"
-materialize_readable_notes_ref "$repo_root" "$notes_dir" "$base_ref" "$out_dir/base"
-materialize_readable_notes_ref "$repo_root" "$notes_dir" "$head_ref" "$out_dir/head"
+materialize_changed_readable_notes_refs \
+  "$repo_root" \
+  "$notes_dir" \
+  "$base_ref" \
+  "$head_ref" \
+  "$out_dir/base" \
+  "$out_dir/head"
 generate_readable_notes_patch "$out_dir/base" "$out_dir/head" "$out_dir/readable.patch"
 
 if [ -s "$out_dir/readable.patch" ]; then
@@ -157,7 +162,7 @@ else
 fi
 
 if [ -n "$out_arg" ]; then
-  echo "Wrote readable base: $out_dir/base" >&2
-  echo "Wrote readable head: $out_dir/head" >&2
+  echo "Wrote changed-note base artifacts: $out_dir/base" >&2
+  echo "Wrote changed-note head artifacts: $out_dir/head" >&2
   echo "Wrote readable patch: $out_dir/readable.patch" >&2
 fi

@@ -87,7 +87,67 @@ commit_readable_update() {
   grep -q "# Alpha" "$out_dir/base/notes/alpha.md"
   grep -q "# Alpha v2" "$out_dir/head/notes/alpha.md"
   grep -q "diff --git a/notes/alpha.md b/notes/alpha.md" "$out_dir/readable.patch"
+  [ ! -e "$out_dir/base/notes/beta.md" ]
+  [ ! -e "$out_dir/head/notes/beta.md" ]
+  [[ "$output" == *"Wrote changed-note base artifacts: $out_dir/base"* ]]
+  [[ "$output" == *"Wrote changed-note head artifacts: $out_dir/head"* ]]
   [[ "$output" == *"Wrote readable patch: $out_dir/readable.patch"* ]]
+}
+
+@test "notes diff materializes manifest-only readable renames" {
+  local manifest next_manifest out_dir
+  manifest="$NOTES_CALLER_PWD/notes/.manifest"
+  next_manifest="$BATS_TEST_TMPDIR/renamed.manifest"
+  out_dir="$BATS_TEST_TMPDIR/renamed-review"
+
+  awk -F '\t' 'BEGIN { OFS = "\t" } $2 == "alpha.md" { $2 = "renamed/alpha.md" } { print }' \
+    "$manifest" > "$next_manifest"
+  mv "$next_manifest" "$manifest"
+  git -C "$NOTES_CALLER_PWD" add notes/.manifest
+  git -C "$NOTES_CALLER_PWD" commit -q -m "rename alpha in manifest"
+
+  run notes diff --out "$out_dir" HEAD~1 HEAD
+
+  [ "$status" -eq 0 ]
+  [ -f "$out_dir/base/notes/alpha.md" ]
+  [ -f "$out_dir/head/notes/renamed/alpha.md" ]
+  grep -q "# Alpha" "$out_dir/base/notes/alpha.md"
+  grep -q "# Alpha" "$out_dir/head/notes/renamed/alpha.md"
+  grep -q "notes/alpha.md" "$out_dir/readable.patch"
+  grep -q "notes/renamed/alpha.md" "$out_dir/readable.patch"
+}
+
+@test "ref diff Git process count does not grow with unchanged notes" {
+  local i real_git counter_bin calls git_call_count
+  rename_to_readable "$NOTES_CALLER_PWD/notes" > /dev/null
+  i=1
+  while [ "$i" -le 50 ]; do
+    printf '# Unchanged %02d\n' "$i" > "$NOTES_CALLER_PWD/notes/unchanged-$i.md"
+    i=$((i + 1))
+  done
+  commit_readable_update "add unchanged scale"
+
+  rename_to_readable "$NOTES_CALLER_PWD/notes" > /dev/null
+  echo "# Alpha changed" > "$NOTES_CALLER_PWD/notes/alpha.md"
+  commit_readable_update "edit one note"
+
+  real_git=$(command -v git)
+  counter_bin="$BATS_TEST_TMPDIR/counter-bin"
+  calls="$BATS_TEST_TMPDIR/git.calls"
+  mkdir -p "$counter_bin"
+  cat > "$counter_bin/git" <<SH
+#!/usr/bin/env bash
+printf '1\\n' >> '$calls'
+exec '$real_git' "\$@"
+SH
+  chmod +x "$counter_bin/git"
+
+  PATH="$counter_bin:$PATH" run notes diff HEAD~1 HEAD
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"diff --git a/notes/alpha.md b/notes/alpha.md"* ]]
+  git_call_count=$(wc -l < "$calls" | tr -d ' ')
+  [ "$git_call_count" -le 30 ]
 }
 
 @test "notes diff --out refuses symlink destinations" {
