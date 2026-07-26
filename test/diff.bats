@@ -117,6 +117,61 @@ commit_readable_update() {
   grep -q "notes/renamed/alpha.md" "$out_dir/readable.patch"
 }
 
+@test "notes diff preserves manifest aliases when one readable path is removed" {
+  local alpha_id manifest next_manifest out_dir
+  manifest="$NOTES_CALLER_PWD/notes/.manifest"
+  alpha_id=$(awk -F '\t' '$2 == "alpha.md" { print $1 }' "$manifest")
+  next_manifest="$BATS_TEST_TMPDIR/aliased.manifest"
+  out_dir="$BATS_TEST_TMPDIR/alias-review"
+
+  printf '%s\talias-alpha.md\n' "$alpha_id" >> "$manifest"
+  git -C "$NOTES_CALLER_PWD" add notes/.manifest
+  git -C "$NOTES_CALLER_PWD" commit -q -m "alias alpha in manifest"
+
+  awk -F '\t' '$2 != "alpha.md" { print }' "$manifest" > "$next_manifest"
+  mv "$next_manifest" "$manifest"
+  git -C "$NOTES_CALLER_PWD" add notes/.manifest
+  git -C "$NOTES_CALLER_PWD" commit -q -m "remove original alpha path"
+
+  run notes diff --out "$out_dir" HEAD~1 HEAD
+
+  [ "$status" -eq 0 ]
+  [ -f "$out_dir/base/notes/alpha.md" ]
+  [ -f "$out_dir/base/notes/alias-alpha.md" ]
+  [ ! -e "$out_dir/head/notes/alpha.md" ]
+  [ -f "$out_dir/head/notes/alias-alpha.md" ]
+  grep -q "deleted file mode" "$out_dir/readable.patch"
+  grep -q "a/notes/alpha.md" "$out_dir/readable.patch"
+  ! grep -q "a/notes/alias-alpha.md" "$out_dir/readable.patch"
+}
+
+@test "notes diff includes unchanged IDs that collide on a changed readable path" {
+  local alpha_id beta_id manifest next_manifest out_dir
+  manifest="$NOTES_CALLER_PWD/notes/.manifest"
+  alpha_id=$(awk -F '\t' '$2 == "alpha.md" { print $1 }' "$manifest")
+  beta_id=$(awk -F '\t' '$2 == "beta.md" { print $1 }' "$manifest")
+  next_manifest="$BATS_TEST_TMPDIR/colliding.manifest"
+  out_dir="$BATS_TEST_TMPDIR/collision-review"
+
+  {
+    printf '%s\tbeta.md\n' "$alpha_id"
+    printf '%s\tbeta.md\n' "$beta_id"
+  } > "$next_manifest"
+  mv "$next_manifest" "$manifest"
+  git -C "$NOTES_CALLER_PWD" add notes/.manifest
+  git -C "$NOTES_CALLER_PWD" commit -q -m "collide readable paths"
+
+  run notes diff --out "$out_dir" HEAD~1 HEAD
+
+  [ "$status" -eq 0 ]
+  [ -f "$out_dir/base/notes/alpha.md" ]
+  grep -q "# Beta" "$out_dir/base/notes/beta.md"
+  [ ! -e "$out_dir/head/notes/alpha.md" ]
+  grep -q "# Beta" "$out_dir/head/notes/beta.md"
+  grep -q "a/notes/alpha.md" "$out_dir/readable.patch"
+  ! grep -q "a/notes/beta.md" "$out_dir/readable.patch"
+}
+
 @test "ref diff Git process count does not grow with unchanged notes" {
   local i real_git counter_bin calls git_call_count
   rename_to_readable "$NOTES_CALLER_PWD/notes" > /dev/null
