@@ -35,7 +35,7 @@ _validate_manifest_readable_paths() {
       invalid = 0
       for (path in paths) {
         ancestor = path
-        while (sub(/\/[^/]+$/, "", ancestor)) {
+        while (sub(/\/[^\/]+$/, "", ancestor)) {
           if (ancestor in paths) {
             printf "Error: %s readable path is both a file and directory: %s\n", ref, ancestor > "/dev/stderr"
             invalid = 1
