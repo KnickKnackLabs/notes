@@ -143,19 +143,41 @@ _changed_note_ids_between_refs() {
   done < "$changed_paths"
 
   awk -F '\t' '
+    function component_root(node, current, next_node) {
+      if (!(node in parent)) parent[node] = node
+      current = node
+      while (parent[current] != current) current = parent[current]
+      while (parent[node] != node) {
+        next_node = parent[node]
+        parent[node] = current
+        node = next_node
+      }
+      return current
+    }
+    function connect(left, right, left_root, right_root) {
+      left_root = component_root(left)
+      right_root = component_root(right)
+      if (left_root == right_root) return
+      if (rank[left_root] < rank[right_root]) {
+        parent[left_root] = right_root
+      } else {
+        parent[right_root] = left_root
+        if (rank[left_root] == rank[right_root]) rank[left_root]++
+      }
+    }
     FILENAME == ARGV[1] { selected_id[$1] = 1; next }
     FILENAME == ARGV[2] {
       base_row[$0] = 1
       row_id[$0] = $1
-      edge_id[++edge_count] = $1
-      edge_path[edge_count] = $2
+      all_id[$1] = 1
+      connect("id" SUBSEP $1, "path" SUBSEP $2)
       next
     }
     {
       head_row[$0] = 1
       row_id[$0] = $1
-      edge_id[++edge_count] = $1
-      edge_path[edge_count] = $2
+      all_id[$1] = 1
+      connect("id" SUBSEP $1, "path" SUBSEP $2)
     }
     END {
       for (row in base_row) if (!(row in head_row)) selected_id[row_id[row]] = 1
@@ -164,23 +186,10 @@ _changed_note_ids_between_refs() {
       # A malformed or merge-produced manifest can alias one ID to multiple
       # paths, or multiple IDs to one path. Pull in the entire affected
       # ID/path component so selection preserves full-tree diff semantics.
-      do {
-        expanded = 0
-        for (i = 1; i <= edge_count; i++) {
-          if ((edge_id[i] in selected_id) || (edge_path[i] in selected_path)) {
-            if (!(edge_id[i] in selected_id)) {
-              selected_id[edge_id[i]] = 1
-              expanded = 1
-            }
-            if (!(edge_path[i] in selected_path)) {
-              selected_path[edge_path[i]] = 1
-              expanded = 1
-            }
-          }
-        }
-      } while (expanded)
-
-      for (id in selected_id) print id
+      for (id in selected_id) selected_component[component_root("id" SUBSEP id)] = 1
+      for (id in all_id) {
+        if (component_root("id" SUBSEP id) in selected_component) print id
+      }
     }
   ' "$candidates" "$base_manifest" "$head_manifest" > "$out"
 
