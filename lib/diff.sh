@@ -143,15 +143,48 @@ _changed_note_ids_between_refs() {
   done < "$changed_paths"
 
   awk -F '\t' '
-    FILENAME == ARGV[1] { base[$1] = $2; next }
-    {
-      seen[$1] = 1
-      if (!($1 in base) || base[$1] != $2) print $1
+    FILENAME == ARGV[1] { selected_id[$1] = 1; next }
+    FILENAME == ARGV[2] {
+      base_row[$0] = 1
+      row_id[$0] = $1
+      edge_id[++edge_count] = $1
+      edge_path[edge_count] = $2
+      next
     }
-    END { for (id in base) if (!(id in seen)) print id }
-  ' "$base_manifest" "$head_manifest" >> "$candidates"
+    {
+      head_row[$0] = 1
+      row_id[$0] = $1
+      edge_id[++edge_count] = $1
+      edge_path[edge_count] = $2
+    }
+    END {
+      for (row in base_row) if (!(row in head_row)) selected_id[row_id[row]] = 1
+      for (row in head_row) if (!(row in base_row)) selected_id[row_id[row]] = 1
 
-  LC_ALL=C sort -u "$candidates" > "$out"
+      # A malformed or merge-produced manifest can alias one ID to multiple
+      # paths, or multiple IDs to one path. Pull in the entire affected
+      # ID/path component so selection preserves full-tree diff semantics.
+      do {
+        expanded = 0
+        for (i = 1; i <= edge_count; i++) {
+          if ((edge_id[i] in selected_id) || (edge_path[i] in selected_path)) {
+            if (!(edge_id[i] in selected_id)) {
+              selected_id[edge_id[i]] = 1
+              expanded = 1
+            }
+            if (!(edge_path[i] in selected_path)) {
+              selected_path[edge_path[i]] = 1
+              expanded = 1
+            }
+          }
+        }
+      } while (expanded)
+
+      for (id in selected_id) print id
+    }
+  ' "$candidates" "$base_manifest" "$head_manifest" > "$out"
+
+  LC_ALL=C sort -u -o "$out" "$out"
   rm -f "$changed_paths" "$candidates"
 }
 
