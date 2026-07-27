@@ -51,11 +51,11 @@ logged_arguments() {
   sed -n 's/^arg=//p' "$1"
 }
 
-@test "test task preserves Notes' eight-worker within-file default" {
+@test "test task preserves Notes' eight-worker across-file default" {
   run notes test changes
 
   [ "$status" -eq 0 ]
-  [[ "$output" == *"8 jobs within files"* ]]
+  [[ "$output" == *"8 jobs across files"* ]]
   [ "$(arg_count "$bats_log" --jobs)" -eq 1 ]
   [ "$(arg_count "$bats_log" 8)" -eq 1 ]
   [ "$(arg_count "$bats_log" --parallel-binary-name)" -eq 1 ]
@@ -117,7 +117,7 @@ logged_arguments() {
   run notes test --jobs 3 changes
 
   [ "$status" -eq 0 ]
-  [[ "$output" == *"3 jobs within files"* ]]
+  [[ "$output" == *"3 jobs across files"* ]]
   [ "$(arg_count "$bats_log" --jobs)" -eq 1 ]
   [ "$(arg_count "$bats_log" 3)" -eq 1 ]
   [ "$(arg_count "$bats_log" 8)" -eq 0 ]

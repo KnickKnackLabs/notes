@@ -183,7 +183,7 @@ run_bats() {
 
   if [ "$effective_jobs" -gt 1 ]; then
     call_arguments+=(--parallel-binary-name "$effective_parallel_command")
-    printf 'BATS parallelism: %s jobs within files via %s\n' \
+    printf 'BATS parallelism: %s jobs across files via %s\n' \
       "$effective_jobs" "$effective_parallel_command"
   else
     printf 'BATS parallelism: serial\n'
