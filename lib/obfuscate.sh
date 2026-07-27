@@ -83,6 +83,8 @@ build_obfuscation_plan() {
   if ! awk -F '\t' -v OFS='\t' -v candidates="$candidates" '
     FILENAME != candidates {
       if ($1 != "") {
+        if (($1 in id_names) && id_names[$1] != $2) duplicate_ids[$1] = 1
+        id_names[$1] = $2
         ids[$1] = 1
         if (!($2 in names)) names[$2] = $1
       }
@@ -97,7 +99,11 @@ build_obfuscation_plan() {
       if (base ~ /^[a-f0-9]{8}$/) {
         print "invalid", "-", relpath
       } else if (relpath in names) {
-        print "known", names[relpath], relpath
+        if (names[relpath] in duplicate_ids) {
+          print "collision", names[relpath], relpath
+        } else {
+          print "known", names[relpath], relpath
+        }
       } else {
         print "new", "-", relpath
       }
@@ -112,6 +118,16 @@ build_obfuscation_plan() {
     if [ "$kind" = "invalid" ]; then
       rm -rf "$workspace"
       refuse_if_hex_basename "$relpath"
+      return 1
+    fi
+    if [ "$kind" = "collision" ]; then
+      rm -rf "$workspace"
+      echo "Error: manifest ID '$id' maps to multiple readable paths" >&2
+      return 1
+    fi
+    if [ "$kind" = "known" ] && [ -e "$notes_dir/$id" ]; then
+      rm -rf "$workspace"
+      echo "Error: refusing to overwrite existing obfuscated path: $id" >&2
       return 1
     fi
   done < "$plan_file"
