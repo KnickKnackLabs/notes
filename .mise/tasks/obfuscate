@@ -141,8 +141,9 @@ if $stage_manifest; then
   if ! $scoped_mode; then
     git -C "$TARGET_DIR" add "$manifest"
   else
-    # Stage HEAD plus only this operation's mappings. Keep unrelated working
-    # manifest edits in the worktree rather than leaking them into the index.
+    # Stage the indexed manifest plus only this operation's mappings. Keep
+    # unrelated working edits out of the index, and use the same canonical
+    # name ordering as the working manifest.
     awk -F '\t' -v OFS='\t' -v renamed="$renamed" '
       FILENAME == renamed {
         target_ids[$2] = 1
@@ -154,7 +155,8 @@ if $stage_manifest; then
       END {
         for (i = 1; i <= count; i++) print rows[i]
       }
-    ' "$renamed" "$indexed_manifest" > "$staged_manifest"
+    ' "$renamed" "$indexed_manifest" \
+      | sort -t$'\t' -k2 > "$staged_manifest"
     manifest_blob=$(git -C "$TARGET_DIR" hash-object -w \
       --path="$notes_dir/.manifest" "$staged_manifest")
     git -C "$TARGET_DIR" update-index --add --cacheinfo \
