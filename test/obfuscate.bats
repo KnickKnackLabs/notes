@@ -202,6 +202,57 @@ setup() {
   git -C "$NOTES_CALLER_PWD" diff --quiet -- notes/.manifest
 }
 
+@test "obfuscate refuses to overwrite an existing known-ID destination" {
+  notes obfuscate
+  local alpha_id
+  alpha_id=$(grep $'\talpha\.md$' "$NOTES_CALLER_PWD/notes/.manifest" | cut -f1)
+  git -C "$NOTES_CALLER_PWD" commit -q --no-verify -m "obfuscated"
+
+  # Simulate an interrupted or stale state containing both representations.
+  printf 'dirty readable content\n' > "$NOTES_CALLER_PWD/notes/alpha.md"
+  local obfuscated_before
+  obfuscated_before=$(cat "$NOTES_CALLER_PWD/notes/$alpha_id")
+
+  run notes obfuscate alpha.md
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"refusing to overwrite existing obfuscated path: $alpha_id"* ]]
+  [ "$(cat "$NOTES_CALLER_PWD/notes/$alpha_id")" = "$obfuscated_before" ]
+  [ "$(cat "$NOTES_CALLER_PWD/notes/alpha.md")" = "dirty readable content" ]
+}
+
+@test "obfuscate refuses to replace a dangling known-ID symlink" {
+  notes obfuscate
+  local alpha_id
+  alpha_id=$(grep $'\talpha\.md$' "$NOTES_CALLER_PWD/notes/.manifest" | cut -f1)
+  rm "$NOTES_CALLER_PWD/notes/$alpha_id"
+  printf 'readable content\n' > "$NOTES_CALLER_PWD/notes/alpha.md"
+  ln -s missing-target "$NOTES_CALLER_PWD/notes/$alpha_id"
+
+  run notes obfuscate alpha.md
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"refusing to overwrite existing obfuscated path: $alpha_id"* ]]
+  [ -L "$NOTES_CALLER_PWD/notes/$alpha_id" ]
+  [ "$(readlink "$NOTES_CALLER_PWD/notes/$alpha_id")" = "missing-target" ]
+  [ "$(cat "$NOTES_CALLER_PWD/notes/alpha.md")" = "readable content" ]
+}
+
+@test "obfuscate refuses a manifest ID shared by planned readable paths" {
+  notes obfuscate
+  local alpha_id
+  alpha_id=$(grep $'\talpha\.md$' "$NOTES_CALLER_PWD/notes/.manifest" | cut -f1)
+  notes deobfuscate
+  printf '%s\tbeta.md\n' "$alpha_id" >> "$NOTES_CALLER_PWD/notes/.manifest"
+
+  run notes obfuscate alpha.md beta.md
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"manifest ID '$alpha_id' maps to multiple readable paths"* ]]
+  [ -f "$NOTES_CALLER_PWD/notes/alpha.md" ]
+  [ -f "$NOTES_CALLER_PWD/notes/beta.md" ]
+}
+
 @test "full obfuscate batches Fold-scale known-entry classification and staging" {
   local count=535 i=1 id name mock_bin command real_command call_log
   rm -rf "$NOTES_CALLER_PWD/notes"
