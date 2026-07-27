@@ -39,12 +39,17 @@ renamed=$(mktemp) || {
   echo "Error: failed to create rename result" >&2
   exit 1
 }
-head_manifest=$(mktemp) || {
+indexed_manifest=$(mktemp) || {
   rm -f "$plan" "$renamed"
   echo "Error: failed to create manifest snapshot" >&2
   exit 1
 }
-trap 'rm -f "$plan" "$renamed" "$head_manifest"' EXIT
+staged_manifest=$(mktemp) || {
+  rm -f "$plan" "$renamed" "$indexed_manifest"
+  echo "Error: failed to create staged manifest" >&2
+  exit 1
+}
+trap 'rm -f "$plan" "$renamed" "$indexed_manifest" "$staged_manifest"' EXIT
 
 if ! build_obfuscation_plan "$abs_notes_dir" "$plan" ${ARGS[@]+"${ARGS[@]}"}; then
   echo "Error: obfuscation planning failed" >&2
@@ -109,15 +114,16 @@ git -C "$TARGET_DIR" rm --cached --quiet --ignore-unmatch -- \
   "${readable_paths[@]}"
 
 # Full mode always owns the complete manifest. Scoped mode stages it only when
-# a renamed mapping is absent from HEAD, preventing unrelated uncommitted
-# mappings from leaking into a pre-commit operation.
+# a renamed mapping is absent from the index, preventing unrelated unstaged
+# mappings from leaking while preserving manifest changes already selected by
+# notes stage.
 stage_manifest=false
 if ! $scoped_mode; then
   stage_manifest=true
 else
   if ! git -C "$TARGET_DIR" cat-file --filters \
-    "HEAD:$notes_dir/.manifest" > "$head_manifest" 2>/dev/null; then
-    : > "$head_manifest"
+    ":$notes_dir/.manifest" > "$indexed_manifest" 2>/dev/null; then
+    : > "$indexed_manifest"
   fi
   if ! awk -F '\t' -v renamed="$renamed" '
     FILENAME != renamed {
@@ -126,13 +132,36 @@ else
     }
     !(($2 FS $1) in entries) { missing = 1 }
     END { exit missing ? 1 : 0 }
-  ' "$head_manifest" "$renamed"; then
+  ' "$indexed_manifest" "$renamed"; then
     stage_manifest=true
   fi
 fi
 
 if $stage_manifest; then
-  git -C "$TARGET_DIR" add "$manifest"
+  if ! $scoped_mode; then
+    git -C "$TARGET_DIR" add "$manifest"
+  else
+    # Stage the indexed manifest plus only this operation's mappings. Keep
+    # unrelated working edits out of the index, and use the same canonical
+    # name ordering as the working manifest.
+    awk -F '\t' -v OFS='\t' -v renamed="$renamed" '
+      FILENAME == renamed {
+        target_ids[$2] = 1
+        target_names[$1] = 1
+        rows[++count] = $2 FS $1
+        next
+      }
+      !(($1 in target_ids) || ($2 in target_names)) { print }
+      END {
+        for (i = 1; i <= count; i++) print rows[i]
+      }
+    ' "$renamed" "$indexed_manifest" \
+      | sort -t$'\t' -k2 > "$staged_manifest"
+    manifest_blob=$(git -C "$TARGET_DIR" hash-object -w \
+      --path="$notes_dir/.manifest" "$staged_manifest")
+    git -C "$TARGET_DIR" update-index --add --cacheinfo \
+      100644 "$manifest_blob" "$notes_dir/.manifest"
+  fi
 fi
 
 echo ""

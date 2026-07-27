@@ -174,6 +174,34 @@ setup() {
   [ -f "$NOTES_CALLER_PWD/notes/$alpha_id" ]
 }
 
+@test "scoped new mapping stages canonical order without unrelated manifest edits" {
+  # Select a later-sorting mapping in the index, then leave another mapping
+  # only in the working manifest.
+  printf '22222222\tgamma.txt\n' > "$NOTES_CALLER_PWD/notes/.manifest"
+  git -C "$NOTES_CALLER_PWD" add -f notes/.manifest
+  printf '33333333\tbeta.md\n' >> "$NOTES_CALLER_PWD/notes/.manifest"
+
+  notes obfuscate alpha.md
+
+  local staged_manifest staged_names working_manifest
+  staged_manifest=$(git -C "$NOTES_CALLER_PWD" show :notes/.manifest)
+  staged_names=$(printf '%s\n' "$staged_manifest" | cut -f2)
+  working_manifest=$(cat "$NOTES_CALLER_PWD/notes/.manifest")
+  [ "$staged_names" = $'alpha.md\ngamma.txt' ]
+  [[ "$staged_manifest" != *$'\tbeta.md'* ]]
+  [[ "$working_manifest" == *$'\talpha.md'* ]]
+  [[ "$working_manifest" == *$'33333333\tbeta.md'* ]]
+
+  # After committing and removing the intentionally unstaged mapping, no
+  # order-only manifest difference remains.
+  git -C "$NOTES_CALLER_PWD" commit -q --no-verify -m "scoped obfuscation"
+  grep -v $'33333333\tbeta.md' "$NOTES_CALLER_PWD/notes/.manifest" \
+    > "$NOTES_CALLER_PWD/notes/.manifest.filtered"
+  mv "$NOTES_CALLER_PWD/notes/.manifest.filtered" \
+    "$NOTES_CALLER_PWD/notes/.manifest"
+  git -C "$NOTES_CALLER_PWD" diff --quiet -- notes/.manifest
+}
+
 @test "obfuscate refuses to overwrite an existing known-ID destination" {
   notes obfuscate
   local alpha_id
@@ -284,7 +312,7 @@ SH
   [ "$rm_calls" -eq 1 ]
 }
 
-@test "scoped obfuscate reads the HEAD manifest once and batches staging" {
+@test "scoped obfuscate reads the indexed manifest once and batches staging" {
   local mock_bin command real_command call_log
   notes obfuscate
   git -C "$NOTES_CALLER_PWD" commit -q --no-verify -m "obfuscated"
@@ -306,7 +334,7 @@ SH
     notes obfuscate alpha.md beta.md
 
   [ "$status" -eq 0 ]
-  [ "$(grep -c $'^git\t.* cat-file --filters HEAD:notes/.manifest$' "$call_log" || true)" -eq 1 ]
+  [ "$(grep -c $'^git\t.* cat-file --filters :notes/.manifest$' "$call_log" || true)" -eq 1 ]
   [ "$(grep -c $'^git\t.* add -- notes/' "$call_log" || true)" -eq 1 ]
   [ "$(grep -c $'^git\t.* rm --cached --quiet --ignore-unmatch -- notes/' "$call_log" || true)" -eq 1 ]
 }
