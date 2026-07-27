@@ -179,7 +179,7 @@ require_commands() {
 }
 
 run_bats() {
-  local call_arguments=(--jobs "$effective_jobs")
+  local call_arguments=(--jobs "$effective_jobs" --no-parallelize-within-files)
 
   if [ "$effective_jobs" -gt 1 ]; then
     call_arguments+=(--parallel-binary-name "$effective_parallel_command")

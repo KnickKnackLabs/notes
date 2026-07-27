@@ -60,7 +60,7 @@ logged_arguments() {
   [ "$(arg_count "$bats_log" 8)" -eq 1 ]
   [ "$(arg_count "$bats_log" --parallel-binary-name)" -eq 1 ]
   [ "$(arg_count "$bats_log" "$mock_dir/rush")" -eq 1 ]
-  [ "$(arg_count "$bats_log" --no-parallelize-within-files)" -eq 0 ]
+  [ "$(arg_count "$bats_log" --no-parallelize-within-files)" -eq 1 ]
   [ "$(arg_count "$bats_log" "$REPO_DIR/test/changes.bats")" -eq 1 ]
   [ ! -e "$uv_log" ]
 }
@@ -107,6 +107,7 @@ logged_arguments() {
   [ "$status" -eq 0 ]
   [ "$(logged_arguments "$bats_log")" = "$(printf '%s\n' \
     --jobs 8 \
+    --no-parallelize-within-files \
     --parallel-binary-name "$mock_dir/rush" \
     --filter test/python/test_audit.py \
     "$REPO_DIR/test/")" ]
