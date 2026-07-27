@@ -174,6 +174,92 @@ setup() {
   [ -f "$NOTES_CALLER_PWD/notes/$alpha_id" ]
 }
 
+@test "full obfuscate batches Fold-scale known-entry classification and staging" {
+  local count=535 i=1 id name mock_bin command real_command call_log
+  rm -rf "$NOTES_CALLER_PWD/notes"
+  mkdir -p "$NOTES_CALLER_PWD/notes"
+
+  while [ "$i" -le "$count" ]; do
+    id=$(printf '%08x' "$i")
+    name=$(printf 'note-%03d.md' "$i")
+    printf '%s\t%s\n' "$id" "$name" >> "$NOTES_CALLER_PWD/notes/.manifest"
+    printf '# Note %d\n' "$i" > "$NOTES_CALLER_PWD/notes/$id"
+    i=$((i + 1))
+  done
+  git -C "$NOTES_CALLER_PWD" add -A
+  git -C "$NOTES_CALLER_PWD" commit -q --no-verify -m "obfuscated corpus"
+
+  while IFS=$'\t' read -r id name; do
+    mv "$NOTES_CALLER_PWD/notes/$id" "$NOTES_CALLER_PWD/notes/$name"
+  done < "$NOTES_CALLER_PWD/notes/.manifest"
+
+  mock_bin="$BATS_TEST_TMPDIR/obfuscate-count-bin"
+  call_log="$BATS_TEST_TMPDIR/obfuscate-calls"
+  mkdir -p "$mock_bin"
+  : > "$call_log"
+  for command in git grep basename awk; do
+    real_command=$(command -v "$command")
+    if [ "$command" = "git" ]; then
+      cat > "$mock_bin/$command" <<SH
+#!/usr/bin/env bash
+printf 'git\\t%s\\n' "\$*" >> "\$OBFUSCATE_CALL_LOG"
+exec '$real_command' "\$@"
+SH
+    else
+      cat > "$mock_bin/$command" <<SH
+#!/usr/bin/env bash
+printf '%s\\n' '$command' >> "\$OBFUSCATE_CALL_LOG"
+exec '$real_command' "\$@"
+SH
+    fi
+    chmod +x "$mock_bin/$command"
+  done
+
+  PATH="$mock_bin:$PATH" OBFUSCATE_CALL_LOG="$call_log" run notes obfuscate
+
+  local awk_calls grep_calls basename_calls add_calls rm_calls
+  awk_calls=$(grep -c '^awk$' "$call_log" || true)
+  grep_calls=$(grep -c '^grep$' "$call_log" || true)
+  basename_calls=$(grep -c '^basename$' "$call_log" || true)
+  add_calls=$(grep -c $'^git\t.* add -- notes/' "$call_log" || true)
+  rm_calls=$(grep -c $'^git\t.* rm --cached --quiet --ignore-unmatch -- notes/' "$call_log" || true)
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Obfuscated 535 file(s)"* ]]
+  # At most one corpus planner plus one existing full-suppression index stream.
+  [ "$awk_calls" -le 2 ]
+  [ "$grep_calls" -eq 0 ]
+  [ "$basename_calls" -eq 0 ]
+  [ "$add_calls" -eq 1 ]
+  [ "$rm_calls" -eq 1 ]
+}
+
+@test "scoped obfuscate reads the HEAD manifest once and batches staging" {
+  local mock_bin command real_command call_log
+  notes obfuscate
+  git -C "$NOTES_CALLER_PWD" commit -q --no-verify -m "obfuscated"
+  notes deobfuscate
+
+  mock_bin="$BATS_TEST_TMPDIR/scoped-obfuscate-count-bin"
+  call_log="$BATS_TEST_TMPDIR/scoped-obfuscate-calls"
+  mkdir -p "$mock_bin"
+  : > "$call_log"
+  real_command=$(command -v git)
+  cat > "$mock_bin/git" <<SH
+#!/usr/bin/env bash
+printf 'git\\t%s\\n' "\$*" >> "\$OBFUSCATE_CALL_LOG"
+exec '$real_command' "\$@"
+SH
+  chmod +x "$mock_bin/git"
+
+  PATH="$mock_bin:$PATH" OBFUSCATE_CALL_LOG="$call_log" run \
+    notes obfuscate alpha.md beta.md
+
+  [ "$status" -eq 0 ]
+  [ "$(grep -c $'^git\t.* cat-file --filters HEAD:notes/.manifest$' "$call_log" || true)" -eq 1 ]
+  [ "$(grep -c $'^git\t.* add -- notes/' "$call_log" || true)" -eq 1 ]
+  [ "$(grep -c $'^git\t.* rm --cached --quiet --ignore-unmatch -- notes/' "$call_log" || true)" -eq 1 ]
+}
+
 # --- Stale manifest cleanup ---
 
 @test "obfuscate removes stale entries for deleted files" {
