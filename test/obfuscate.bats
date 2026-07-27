@@ -174,6 +174,20 @@ setup() {
   [ -f "$NOTES_CALLER_PWD/notes/$alpha_id" ]
 }
 
+@test "scoped new mapping does not stage unrelated manifest edits" {
+  printf '33333333\tbeta.md\n' > "$NOTES_CALLER_PWD/notes/.manifest"
+
+  notes obfuscate alpha.md
+
+  local staged_manifest working_manifest
+  staged_manifest=$(git -C "$NOTES_CALLER_PWD" show :notes/.manifest)
+  working_manifest=$(cat "$NOTES_CALLER_PWD/notes/.manifest")
+  [[ "$staged_manifest" == *$'\talpha.md'* ]]
+  [[ "$staged_manifest" != *$'\tbeta.md'* ]]
+  [[ "$working_manifest" == *$'\talpha.md'* ]]
+  [[ "$working_manifest" == *$'33333333\tbeta.md'* ]]
+}
+
 @test "full obfuscate batches Fold-scale known-entry classification and staging" {
   local count=535 i=1 id name mock_bin command real_command call_log
   rm -rf "$NOTES_CALLER_PWD/notes"
@@ -233,7 +247,7 @@ SH
   [ "$rm_calls" -eq 1 ]
 }
 
-@test "scoped obfuscate reads the HEAD manifest once and batches staging" {
+@test "scoped obfuscate reads the indexed manifest once and batches staging" {
   local mock_bin command real_command call_log
   notes obfuscate
   git -C "$NOTES_CALLER_PWD" commit -q --no-verify -m "obfuscated"
@@ -255,7 +269,7 @@ SH
     notes obfuscate alpha.md beta.md
 
   [ "$status" -eq 0 ]
-  [ "$(grep -c $'^git\t.* cat-file --filters HEAD:notes/.manifest$' "$call_log" || true)" -eq 1 ]
+  [ "$(grep -c $'^git\t.* cat-file --filters :notes/.manifest$' "$call_log" || true)" -eq 1 ]
   [ "$(grep -c $'^git\t.* add -- notes/' "$call_log" || true)" -eq 1 ]
   [ "$(grep -c $'^git\t.* rm --cached --quiet --ignore-unmatch -- notes/' "$call_log" || true)" -eq 1 ]
 }
