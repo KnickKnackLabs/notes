@@ -198,6 +198,38 @@ commit_readable_update() {
   [[ "$output" != *"# Beta changed"* ]]
 }
 
+@test "notes diff preserves changed overwrite order for colliding readable paths" {
+  local alpha_id beta_id manifest next_manifest out_dir
+  manifest="$NOTES_CALLER_PWD/notes/.manifest"
+  alpha_id=$(awk -F '\t' '$2 == "alpha.md" { print $1 }' "$manifest")
+  beta_id=$(awk -F '\t' '$2 == "beta.md" { print $1 }' "$manifest")
+  next_manifest="$BATS_TEST_TMPDIR/reordered.manifest"
+  out_dir="$BATS_TEST_TMPDIR/reordered-review"
+
+  {
+    printf '%s\tshared.md\n' "$alpha_id"
+    printf '%s\tshared.md\n' "$beta_id"
+  } > "$manifest"
+  git -C "$NOTES_CALLER_PWD" add notes/.manifest
+  git -C "$NOTES_CALLER_PWD" commit -q -m "collide readable paths"
+
+  {
+    printf '%s\tshared.md\n' "$beta_id"
+    printf '%s\tshared.md\n' "$alpha_id"
+  } > "$next_manifest"
+  mv "$next_manifest" "$manifest"
+  git -C "$NOTES_CALLER_PWD" add notes/.manifest
+  git -C "$NOTES_CALLER_PWD" commit -q -m "change collision overwrite order"
+
+  run notes diff --out "$out_dir" HEAD~1 HEAD
+
+  [ "$status" -eq 0 ]
+  grep -q "# Beta" "$out_dir/base/notes/shared.md"
+  grep -q "# Alpha" "$out_dir/head/notes/shared.md"
+  grep -q -- "-# Beta" "$out_dir/readable.patch"
+  grep -q -- "+# Alpha" "$out_dir/readable.patch"
+}
+
 @test "ref diff Git process count does not grow with unchanged notes" {
   local i real_git counter_bin calls git_call_count
   rename_to_readable "$NOTES_CALLER_PWD/notes" > /dev/null
