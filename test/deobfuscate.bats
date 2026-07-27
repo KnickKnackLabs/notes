@@ -208,6 +208,37 @@ SH
 }
 
 
+@test "scoped deobfuscate derives an ID without calling basename" {
+  notes obfuscate
+
+  local alpha_id mock_bin real_basename blocked_log
+  alpha_id=$(grep 'alpha.md' "$NOTES_CALLER_PWD/notes/.manifest" | cut -f1)
+  mock_bin="$BATS_TEST_TMPDIR/basename-guard-bin"
+  blocked_log="$BATS_TEST_TMPDIR/basename-blocked"
+  real_basename=$(command -v basename)
+  mkdir -p "$mock_bin"
+  cat > "$mock_bin/basename" <<'BASH'
+#!/usr/bin/env bash
+if [ "$#" -eq 1 ] && [ "$1" = "$BLOCKED_BASENAME_ARG" ]; then
+  printf '%s\n' "$1" > "$BLOCKED_COMMAND_LOG"
+  exit 97
+fi
+exec "$REAL_BASENAME" "$@"
+BASH
+  chmod +x "$mock_bin/basename"
+
+  PATH="$mock_bin:$PATH" \
+    BLOCKED_BASENAME_ARG="$alpha_id" \
+    BLOCKED_COMMAND_LOG="$blocked_log" \
+    REAL_BASENAME="$real_basename" \
+    run notes deobfuscate "notes/$alpha_id"
+
+  [ "$status" -eq 0 ]
+  [ -f "$NOTES_CALLER_PWD/notes/alpha.md" ]
+  [ ! -e "$blocked_log" ]
+}
+
+
 @test "deobfuscate with args warns on unknown ID" {
   notes obfuscate
 

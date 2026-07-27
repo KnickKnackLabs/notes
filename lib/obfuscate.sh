@@ -433,7 +433,8 @@ _rename_one_to_readable() {
   fi
 
   local target_dir
-  target_dir=$(dirname "$notes_dir/$relpath")
+  target_dir="$notes_dir/$relpath"
+  target_dir="${target_dir%/*}"
   [ ! -d "$target_dir" ] && mkdir -p "$target_dir"
 
   if [ -e "$notes_dir/$relpath" ] && ! cmp -s "$notes_dir/$id" "$notes_dir/$relpath"; then
