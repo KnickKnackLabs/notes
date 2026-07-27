@@ -193,6 +193,23 @@ setup() {
   [ "$(cat "$NOTES_CALLER_PWD/notes/alpha.md")" = "dirty readable content" ]
 }
 
+@test "obfuscate refuses to replace a dangling known-ID symlink" {
+  notes obfuscate
+  local alpha_id
+  alpha_id=$(grep $'\talpha\.md$' "$NOTES_CALLER_PWD/notes/.manifest" | cut -f1)
+  rm "$NOTES_CALLER_PWD/notes/$alpha_id"
+  printf 'readable content\n' > "$NOTES_CALLER_PWD/notes/alpha.md"
+  ln -s missing-target "$NOTES_CALLER_PWD/notes/$alpha_id"
+
+  run notes obfuscate alpha.md
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"refusing to overwrite existing obfuscated path: $alpha_id"* ]]
+  [ -L "$NOTES_CALLER_PWD/notes/$alpha_id" ]
+  [ "$(readlink "$NOTES_CALLER_PWD/notes/$alpha_id")" = "missing-target" ]
+  [ "$(cat "$NOTES_CALLER_PWD/notes/alpha.md")" = "readable content" ]
+}
+
 @test "obfuscate refuses a manifest ID shared by planned readable paths" {
   notes obfuscate
   local alpha_id

@@ -125,7 +125,7 @@ build_obfuscation_plan() {
       echo "Error: manifest ID '$id' maps to multiple readable paths" >&2
       return 1
     fi
-    if [ "$kind" = "known" ] && [ -e "$notes_dir/$id" ]; then
+    if [ "$kind" = "known" ] && { [ -e "$notes_dir/$id" ] || [ -L "$notes_dir/$id" ]; }; then
       rm -rf "$workspace"
       echo "Error: refusing to overwrite existing obfuscated path: $id" >&2
       return 1

@@ -6,7 +6,7 @@
 
 **Collective memory, encrypted.**
 
-[![tests: 418](https://img.shields.io/badge/tests-418-brightgreen?style=flat)](test/)
+[![tests: 419](https://img.shields.io/badge/tests-419-brightgreen?style=flat)](test/)
 ![lints: 8](https://img.shields.io/badge/lints-8-blue?style=flat)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue?style=flat)](LICENSE)
 
