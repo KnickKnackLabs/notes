@@ -174,6 +174,171 @@ setup() {
   [ -f "$NOTES_CALLER_PWD/notes/$alpha_id" ]
 }
 
+@test "scoped new mapping stages canonical order without unrelated manifest edits" {
+  # Select a later-sorting mapping in the index, then leave another mapping
+  # only in the working manifest.
+  printf '22222222\tgamma.txt\n' > "$NOTES_CALLER_PWD/notes/.manifest"
+  git -C "$NOTES_CALLER_PWD" add -f notes/.manifest
+  printf '33333333\tbeta.md\n' >> "$NOTES_CALLER_PWD/notes/.manifest"
+
+  notes obfuscate alpha.md
+
+  local staged_manifest staged_names working_manifest
+  staged_manifest=$(git -C "$NOTES_CALLER_PWD" show :notes/.manifest)
+  staged_names=$(printf '%s\n' "$staged_manifest" | cut -f2)
+  working_manifest=$(cat "$NOTES_CALLER_PWD/notes/.manifest")
+  [ "$staged_names" = $'alpha.md\ngamma.txt' ]
+  [[ "$staged_manifest" != *$'\tbeta.md'* ]]
+  [[ "$working_manifest" == *$'\talpha.md'* ]]
+  [[ "$working_manifest" == *$'33333333\tbeta.md'* ]]
+
+  # After committing and removing the intentionally unstaged mapping, no
+  # order-only manifest difference remains.
+  git -C "$NOTES_CALLER_PWD" commit -q --no-verify -m "scoped obfuscation"
+  grep -v $'33333333\tbeta.md' "$NOTES_CALLER_PWD/notes/.manifest" \
+    > "$NOTES_CALLER_PWD/notes/.manifest.filtered"
+  mv "$NOTES_CALLER_PWD/notes/.manifest.filtered" \
+    "$NOTES_CALLER_PWD/notes/.manifest"
+  git -C "$NOTES_CALLER_PWD" diff --quiet -- notes/.manifest
+}
+
+@test "obfuscate refuses to overwrite an existing known-ID destination" {
+  notes obfuscate
+  local alpha_id
+  alpha_id=$(grep $'\talpha\.md$' "$NOTES_CALLER_PWD/notes/.manifest" | cut -f1)
+  git -C "$NOTES_CALLER_PWD" commit -q --no-verify -m "obfuscated"
+
+  # Simulate an interrupted or stale state containing both representations.
+  printf 'dirty readable content\n' > "$NOTES_CALLER_PWD/notes/alpha.md"
+  local obfuscated_before
+  obfuscated_before=$(cat "$NOTES_CALLER_PWD/notes/$alpha_id")
+
+  run notes obfuscate alpha.md
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"refusing to overwrite existing obfuscated path: $alpha_id"* ]]
+  [ "$(cat "$NOTES_CALLER_PWD/notes/$alpha_id")" = "$obfuscated_before" ]
+  [ "$(cat "$NOTES_CALLER_PWD/notes/alpha.md")" = "dirty readable content" ]
+}
+
+@test "obfuscate refuses to replace a dangling known-ID symlink" {
+  notes obfuscate
+  local alpha_id
+  alpha_id=$(grep $'\talpha\.md$' "$NOTES_CALLER_PWD/notes/.manifest" | cut -f1)
+  rm "$NOTES_CALLER_PWD/notes/$alpha_id"
+  printf 'readable content\n' > "$NOTES_CALLER_PWD/notes/alpha.md"
+  ln -s missing-target "$NOTES_CALLER_PWD/notes/$alpha_id"
+
+  run notes obfuscate alpha.md
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"refusing to overwrite existing obfuscated path: $alpha_id"* ]]
+  [ -L "$NOTES_CALLER_PWD/notes/$alpha_id" ]
+  [ "$(readlink "$NOTES_CALLER_PWD/notes/$alpha_id")" = "missing-target" ]
+  [ "$(cat "$NOTES_CALLER_PWD/notes/alpha.md")" = "readable content" ]
+}
+
+@test "obfuscate refuses a manifest ID shared by planned readable paths" {
+  notes obfuscate
+  local alpha_id
+  alpha_id=$(grep $'\talpha\.md$' "$NOTES_CALLER_PWD/notes/.manifest" | cut -f1)
+  notes deobfuscate
+  printf '%s\tbeta.md\n' "$alpha_id" >> "$NOTES_CALLER_PWD/notes/.manifest"
+
+  run notes obfuscate alpha.md beta.md
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"manifest ID '$alpha_id' maps to multiple readable paths"* ]]
+  [ -f "$NOTES_CALLER_PWD/notes/alpha.md" ]
+  [ -f "$NOTES_CALLER_PWD/notes/beta.md" ]
+}
+
+@test "full obfuscate batches Fold-scale known-entry classification and staging" {
+  local count=535 i=1 id name mock_bin command real_command call_log
+  rm -rf "$NOTES_CALLER_PWD/notes"
+  mkdir -p "$NOTES_CALLER_PWD/notes"
+
+  while [ "$i" -le "$count" ]; do
+    id=$(printf '%08x' "$i")
+    name=$(printf 'note-%03d.md' "$i")
+    printf '%s\t%s\n' "$id" "$name" >> "$NOTES_CALLER_PWD/notes/.manifest"
+    printf '# Note %d\n' "$i" > "$NOTES_CALLER_PWD/notes/$id"
+    i=$((i + 1))
+  done
+  git -C "$NOTES_CALLER_PWD" add -A
+  git -C "$NOTES_CALLER_PWD" commit -q --no-verify -m "obfuscated corpus"
+
+  while IFS=$'\t' read -r id name; do
+    mv "$NOTES_CALLER_PWD/notes/$id" "$NOTES_CALLER_PWD/notes/$name"
+  done < "$NOTES_CALLER_PWD/notes/.manifest"
+
+  mock_bin="$BATS_TEST_TMPDIR/obfuscate-count-bin"
+  call_log="$BATS_TEST_TMPDIR/obfuscate-calls"
+  mkdir -p "$mock_bin"
+  : > "$call_log"
+  for command in git grep basename awk; do
+    real_command=$(command -v "$command")
+    if [ "$command" = "git" ]; then
+      cat > "$mock_bin/$command" <<SH
+#!/usr/bin/env bash
+printf 'git\\t%s\\n' "\$*" >> "\$OBFUSCATE_CALL_LOG"
+exec '$real_command' "\$@"
+SH
+    else
+      cat > "$mock_bin/$command" <<SH
+#!/usr/bin/env bash
+printf '%s\\n' '$command' >> "\$OBFUSCATE_CALL_LOG"
+exec '$real_command' "\$@"
+SH
+    fi
+    chmod +x "$mock_bin/$command"
+  done
+
+  PATH="$mock_bin:$PATH" OBFUSCATE_CALL_LOG="$call_log" run notes obfuscate
+
+  local awk_calls grep_calls basename_calls add_calls rm_calls
+  awk_calls=$(grep -c '^awk$' "$call_log" || true)
+  grep_calls=$(grep -c '^grep$' "$call_log" || true)
+  basename_calls=$(grep -c '^basename$' "$call_log" || true)
+  add_calls=$(grep -c $'^git\t.* add -- notes/' "$call_log" || true)
+  rm_calls=$(grep -c $'^git\t.* rm --cached --quiet --ignore-unmatch -- notes/' "$call_log" || true)
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Obfuscated 535 file(s)"* ]]
+  # At most one corpus planner plus one existing full-suppression index stream.
+  [ "$awk_calls" -le 2 ]
+  [ "$grep_calls" -eq 0 ]
+  [ "$basename_calls" -eq 0 ]
+  [ "$add_calls" -eq 1 ]
+  [ "$rm_calls" -eq 1 ]
+}
+
+@test "scoped obfuscate reads the indexed manifest once and batches staging" {
+  local mock_bin command real_command call_log
+  notes obfuscate
+  git -C "$NOTES_CALLER_PWD" commit -q --no-verify -m "obfuscated"
+  notes deobfuscate
+
+  mock_bin="$BATS_TEST_TMPDIR/scoped-obfuscate-count-bin"
+  call_log="$BATS_TEST_TMPDIR/scoped-obfuscate-calls"
+  mkdir -p "$mock_bin"
+  : > "$call_log"
+  real_command=$(command -v git)
+  cat > "$mock_bin/git" <<SH
+#!/usr/bin/env bash
+printf 'git\\t%s\\n' "\$*" >> "\$OBFUSCATE_CALL_LOG"
+exec '$real_command' "\$@"
+SH
+  chmod +x "$mock_bin/git"
+
+  PATH="$mock_bin:$PATH" OBFUSCATE_CALL_LOG="$call_log" run \
+    notes obfuscate alpha.md beta.md
+
+  [ "$status" -eq 0 ]
+  [ "$(grep -c $'^git\t.* cat-file --filters :notes/.manifest$' "$call_log" || true)" -eq 1 ]
+  [ "$(grep -c $'^git\t.* add -- notes/' "$call_log" || true)" -eq 1 ]
+  [ "$(grep -c $'^git\t.* rm --cached --quiet --ignore-unmatch -- notes/' "$call_log" || true)" -eq 1 ]
+}
+
 # --- Stale manifest cleanup ---
 
 @test "obfuscate removes stale entries for deleted files" {

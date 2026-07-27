@@ -5,8 +5,8 @@
 # Refuse to proceed if a filename's basename looks like an obfuscated id.
 # An obfuscated id is 8 lowercase hex characters with no extension.
 #
-# Callers rely on `manifest_has_id` to detect "already obfuscated, skip." If
-# the manifest is inconsistent (stale, lost entries, orphan blobs), that
+# The corpus planner uses manifest IDs to detect "already obfuscated, skip."
+# If the manifest is inconsistent (stale, lost entries, orphan blobs), that
 # check can miss and the file would be re-obfuscated under a new random id,
 # creating a duplicate blob and masking the underlying problem. Better to
 # fail loudly and make the user investigate.
@@ -16,7 +16,7 @@
 refuse_if_hex_basename() {
   local relpath="$1"
   local base
-  base=$(basename "$relpath")
+  base="${relpath##*/}"
   if [[ "$base" =~ ^[a-f0-9]{8}$ ]]; then
     cat >&2 <<EOF
 Error: refusing to obfuscate '$relpath' — basename looks like an obfuscated id.
@@ -37,102 +37,131 @@ EOF
   return 0
 }
 
-# Rename readable files to obfuscated IDs.
-# Outputs "<relpath>\t<id>" per renamed file (for callers to stage).
-# Usage: rename_to_obfuscated <notes_dir> [file...]
-#   Without files: scans notes_dir for all non-obfuscated files.
-#   With files: only processes the listed files (relative to notes_dir).
-rename_to_obfuscated() {
-  local notes_dir="$1"
-  shift
+# Build a corpus-level obfuscation plan.
+# Output rows are "<kind>\t<id-or-dash>\t<relpath>", where kind is
+# "known" for an existing manifest mapping or "new" for a new readable name.
+# Already-obfuscated IDs are omitted. The full plan is checked for orphan
+# hash-shaped names before any caller mutates the working tree.
+# Usage: build_obfuscation_plan <notes_dir> <plan_file> [file...]
+build_obfuscation_plan() {
+  local notes_dir="$1" plan_file="$2"
+  shift 2
   local scoped_files=("$@")
   local manifest="$notes_dir/.manifest"
+  local workspace candidates manifest_input
 
-  local to_rename=() to_restore=()
-  local scoped_mode=false
+  workspace=$(mktemp -d) || {
+    echo "Error: failed to create obfuscation workspace" >&2
+    return 1
+  }
+  candidates="$workspace/candidates"
+  : > "$candidates"
 
   if [ ${#scoped_files[@]} -gt 0 ] && [ -n "${scoped_files[0]}" ]; then
-    scoped_mode=true
+    local relpath
     for relpath in "${scoped_files[@]}"; do
       [[ "$relpath" == ".manifest" ]] && continue
-      [ ! -f "$notes_dir/$relpath" ] && continue
-
-      local base
-      base=$(basename "$relpath")
-      if manifest_has_id "$manifest" "$base"; then
-        continue  # already obfuscated
-      fi
-
-      # Refuse to obfuscate a file whose basename already looks like an
-      # obfuscated id (8 hex chars, no extension). This only happens when
-      # the manifest is inconsistent with the working tree — e.g., a stale
-      # manifest lost the mapping for an already-obfuscated file, or an
-      # orphan obfuscated blob exists without an entry. Re-obfuscating
-      # would create a duplicate blob under a fresh random id and hide
-      # the real problem (as happened on den/fold through April 2026).
-      refuse_if_hex_basename "$relpath" || return 1
-
-      local existing_id
-      if ! existing_id=$(manifest_id_for_name "$manifest" "$relpath"); then
-        existing_id=""
-      fi
-      if [ -n "$existing_id" ]; then
-        to_restore+=("$relpath")
-      else
-        to_rename+=("$relpath")
-      fi
+      [ -f "$notes_dir/$relpath" ] || continue
+      printf '%s\n' "$relpath" >> "$candidates"
     done
   else
-    while IFS= read -r f; do
-      [ ! -f "$f" ] && continue
-      local relpath="${f#"$notes_dir"/}"
+    local file relpath
+    while IFS= read -r file; do
+      [ -f "$file" ] || continue
+      relpath="${file#"$notes_dir"/}"
       [[ "$relpath" == ".manifest" ]] && continue
-
-      local base
-      base=$(basename "$f")
-      if manifest_has_id "$manifest" "$base"; then
-        continue
-      fi
-
-      refuse_if_hex_basename "$relpath" || return 1
-
-      local existing_id
-      if ! existing_id=$(manifest_id_for_name "$manifest" "$relpath"); then
-        existing_id=""
-      fi
-      if [ -n "$existing_id" ]; then
-        to_restore+=("$relpath")
-      else
-        to_rename+=("$relpath")
-      fi
+      printf '%s\n' "$relpath" >> "$candidates"
     done < <(find "$notes_dir" -type f | sort)
   fi
 
-  if [ ${#to_rename[@]} -eq 0 ] && [ ${#to_restore[@]} -eq 0 ]; then
-    return 2  # nothing to do (distinct from error)
+  manifest_input="$manifest"
+  if [ ! -f "$manifest_input" ]; then
+    manifest_input="$workspace/manifest"
+    : > "$manifest_input"
   fi
 
-  # Track new manifest entries
-  local new_entries
-  new_entries=$(mktemp) || { echo "Error: failed to create temp file" >&2; return 1; }
+  if ! awk -F '\t' -v OFS='\t' -v candidates="$candidates" '
+    FILENAME != candidates {
+      if ($1 != "") {
+        if (($1 in id_names) && id_names[$1] != $2) duplicate_ids[$1] = 1
+        id_names[$1] = $2
+        ids[$1] = 1
+        if (!($2 in names)) names[$2] = $1
+      }
+      next
+    }
+    {
+      relpath = $0
+      if (relpath == "" || seen[relpath]++) next
+      count = split(relpath, parts, "/")
+      base = parts[count]
+      if (base in ids) next
+      if (base ~ /^[a-f0-9]{8}$/) {
+        print "invalid", "-", relpath
+      } else if (relpath in names) {
+        if (names[relpath] in duplicate_ids) {
+          print "collision", names[relpath], relpath
+        } else {
+          print "known", names[relpath], relpath
+        }
+      } else {
+        print "new", "-", relpath
+      }
+    }
+  ' "$manifest_input" "$candidates" > "$plan_file"; then
+    rm -rf "$workspace"
+    return 1
+  fi
 
-  # Restore files to their known IDs
-  for relpath in ${to_restore[@]+"${to_restore[@]}"}; do
-    local id
-    if ! id=$(manifest_id_for_name "$manifest" "$relpath"); then
-      id=""
+  local kind id
+  while IFS=$'\t' read -r kind id relpath; do
+    if [ "$kind" = "invalid" ]; then
+      rm -rf "$workspace"
+      refuse_if_hex_basename "$relpath"
+      return 1
     fi
+    if [ "$kind" = "collision" ]; then
+      rm -rf "$workspace"
+      echo "Error: manifest ID '$id' maps to multiple readable paths" >&2
+      return 1
+    fi
+    if [ "$kind" = "known" ] && { [ -e "$notes_dir/$id" ] || [ -L "$notes_dir/$id" ]; }; then
+      rm -rf "$workspace"
+      echo "Error: refusing to overwrite existing obfuscated path: $id" >&2
+      return 1
+    fi
+  done < "$plan_file"
+
+  rm -rf "$workspace"
+}
+
+# Apply a precomputed obfuscation plan.
+# Outputs "<relpath>\t<id>" per renamed file for callers to stage.
+# Usage: apply_obfuscation_plan <notes_dir> <plan_file> <scoped_mode>
+apply_obfuscation_plan() {
+  local notes_dir="$1" plan_file="$2" scoped_mode="$3"
+  local manifest="$notes_dir/.manifest"
+  local new_entries kind id relpath new_count=0
+
+  [ -s "$plan_file" ] || return 2
+
+  new_entries=$(mktemp) || {
+    echo "Error: failed to create temp file" >&2
+    return 1
+  }
+
+  while IFS=$'\t' read -r kind id relpath; do
+    [ "$kind" = "known" ] || continue
     if ! mv "$notes_dir/$relpath" "$notes_dir/$id"; then
       echo "Error: failed to rename $relpath → $id" >&2
       rm -f "$new_entries"
       return 1
     fi
     printf '%s\t%s\n' "$relpath" "$id"
-  done
+  done < "$plan_file"
 
-  # Generate IDs and rename new files
-  for relpath in ${to_rename[@]+"${to_rename[@]}"}; do
-    local id
+  while IFS=$'\t' read -r kind id relpath; do
+    [ "$kind" = "new" ] || continue
     id=$(openssl rand -hex 4)
     while manifest_has_id "$manifest" "$id" || \
           grep -q "^${id}"$'\t' "$new_entries" 2>/dev/null || \
@@ -147,7 +176,8 @@ rename_to_obfuscated() {
       return 1
     fi
     printf '%s\t%s\n' "$relpath" "$id"
-  done
+    new_count=$((new_count + 1))
+  done < "$plan_file"
 
   # Empty-directory cleanup is cosmetic and must not invalidate completed renames.
   if ! find "$notes_dir" -mindepth 1 -type d -empty -delete 2>/dev/null; then
@@ -158,7 +188,7 @@ rename_to_obfuscated() {
   # manifest at all. Re-sorting a valid but differently-ordered manifest creates
   # an order-only dirty worktree after the pre-commit hook, because scoped
   # obfuscation intentionally does not stage unchanged manifest mappings.
-  if $scoped_mode && [ ${#to_rename[@]} -eq 0 ]; then
+  if $scoped_mode && [ "$new_count" -eq 0 ]; then
     rm -f "$new_entries"
     return 0
   fi
@@ -166,13 +196,17 @@ rename_to_obfuscated() {
   # Update manifest: merge existing + new entries, sorted by name.
   # An entry is live if either its obfuscated id or readable name is on disk.
   local merged
-  merged=$(mktemp) || { echo "Error: failed to create temp file" >&2; rm -f "$new_entries"; return 1; }
+  merged=$(mktemp) || {
+    echo "Error: failed to create temp file" >&2
+    rm -f "$new_entries"
+    return 1
+  }
 
   if [ -f "$manifest" ]; then
-    while IFS=$'\t' read -r id name; do
+    while IFS=$'\t' read -r id relpath; do
       [ -z "$id" ] && continue
-      if [ -f "$notes_dir/$id" ] || [ -f "$notes_dir/$name" ]; then
-        printf '%s\t%s\n' "$id" "$name"
+      if [ -f "$notes_dir/$id" ] || [ -f "$notes_dir/$relpath" ]; then
+        printf '%s\t%s\n' "$id" "$relpath"
       fi
     done < "$manifest" > "$merged"
   fi
@@ -181,7 +215,11 @@ rename_to_obfuscated() {
   # Sort to a temp file first, then mv — avoids truncating the manifest
   # if sort fails (sort > $manifest truncates before sort runs).
   local sorted
-  sorted=$(mktemp) || { echo "Error: failed to create temp file" >&2; rm -f "$merged" "$new_entries"; return 1; }
+  sorted=$(mktemp) || {
+    echo "Error: failed to create temp file" >&2
+    rm -f "$merged" "$new_entries"
+    return 1
+  }
   if ! sort -t$'\t' -k2 "$merged" > "$sorted"; then
     echo "Error: failed to sort manifest" >&2
     rm -f "$merged" "$new_entries" "$sorted"
@@ -189,6 +227,31 @@ rename_to_obfuscated() {
   fi
   mv -f "$sorted" "$manifest"
   rm -f "$merged" "$new_entries"
+}
+
+# Rename readable files to obfuscated IDs.
+# Outputs "<relpath>\t<id>" per renamed file (for callers to stage).
+# Usage: rename_to_obfuscated <notes_dir> [file...]
+#   Without files: scans notes_dir for all non-obfuscated files.
+#   With files: only processes the listed files (relative to notes_dir).
+rename_to_obfuscated() {
+  local notes_dir="$1"
+  shift
+  local scoped_mode=false plan rc
+  [ "$#" -gt 0 ] && [ -n "${1:-}" ] && scoped_mode=true
+
+  plan=$(mktemp) || {
+    echo "Error: failed to create temp file" >&2
+    return 1
+  }
+  if ! build_obfuscation_plan "$notes_dir" "$plan" "$@"; then
+    rm -f "$plan"
+    return 1
+  fi
+
+  apply_obfuscation_plan "$notes_dir" "$plan" "$scoped_mode" && rc=0 || rc=$?
+  rm -f "$plan"
+  return "$rc"
 }
 
 # Local state file recording the readable path and content hash last restored
