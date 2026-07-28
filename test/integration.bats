@@ -539,6 +539,67 @@ run_encryption_hook() {
   [ "$status" -eq 0 ]
 }
 
+@test "encryption hook checks multiple valid staged paths in one git-crypt call (#49)" {
+  notes setup --yes
+  local fpr
+  fpr=$(generate_test_key "$GNUPGHOME")
+  notes add-user -- --gpg-key "$fpr"
+
+  mkdir -p "$TARGET_DIR/notes"
+  printf '%s\n' "first secret" > "$TARGET_DIR/notes/first.md"
+  printf '%s\n' "second secret" > "$TARGET_DIR/notes/second.md"
+  git -C "$TARGET_DIR" add notes/first.md notes/second.md
+
+  local mock_bin="$BATS_TEST_TMPDIR/counting-git-crypt-bin"
+  local calls="$BATS_TEST_TMPDIR/git-crypt-calls"
+  export GIT_CRYPT_CALLS="$calls"
+  mkdir -p "$mock_bin"
+  cat > "$mock_bin/git-crypt" <<'SH'
+#!/usr/bin/env bash
+printf 'call\n' >> "$GIT_CRYPT_CALLS"
+PATH="${PATH#*:}" exec git-crypt "$@"
+SH
+  chmod +x "$mock_bin/git-crypt"
+  export PATH="$mock_bin:$PATH"
+
+  run_encryption_hook
+  [ "$status" -eq 0 ]
+  [ "$(wc -l < "$calls" | tr -d ' ')" -eq 1 ]
+}
+
+@test "encryption hook falls back per path after a batched plaintext result (#49)" {
+  notes setup --yes
+  local fpr
+  fpr=$(generate_test_key "$GNUPGHOME")
+  notes add-user -- --gpg-key "$fpr"
+
+  mkdir -p "$TARGET_DIR/notes"
+  local file blob
+  for file in first.md second.md; do
+    blob=$(printf 'PLAINTEXT-LEAK\n' | git -C "$TARGET_DIR" hash-object -w --stdin)
+    git -C "$TARGET_DIR" update-index --add --cacheinfo \
+      100644 "$blob" "notes/$file"
+  done
+
+  local mock_bin="$BATS_TEST_TMPDIR/fallback-git-crypt-bin"
+  local calls="$BATS_TEST_TMPDIR/git-crypt-fallback-calls"
+  export GIT_CRYPT_CALLS="$calls"
+  mkdir -p "$mock_bin"
+  cat > "$mock_bin/git-crypt" <<'SH'
+#!/usr/bin/env bash
+printf 'call\n' >> "$GIT_CRYPT_CALLS"
+PATH="${PATH#*:}" exec git-crypt "$@"
+SH
+  chmod +x "$mock_bin/git-crypt"
+  export PATH="$mock_bin:$PATH"
+
+  run_encryption_hook
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"notes/first.md"* ]]
+  [[ "$output" == *"notes/second.md"* ]]
+  [ "$(wc -l < "$calls" | tr -d ' ')" -eq 3 ]
+}
+
 @test "encryption hook fails closed when git-crypt cannot inspect a staged path (#49)" {
   notes setup --yes
   local fpr

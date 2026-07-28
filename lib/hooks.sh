@@ -42,10 +42,12 @@ ensure_hook_dispatcher() {
 }
 
 # Install the encryption pre-commit check.
+# Render the source package path so the hook uses the exact Notes version that
+# installed it rather than whichever `notes` command appears first on PATH.
 install_encryption_hook() {
   ensure_hook_dispatcher pre-commit
   local target="$TARGET_DIR/.git/hooks/pre-commit.d/encryption"
-  cp "$HOOKS_DIR/encryption" "$target"
+  _render_notes_hook_template "$HOOKS_DIR/encryption.template" "." > "$target"
   chmod +x "$target"
 }
 

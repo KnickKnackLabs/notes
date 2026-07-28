@@ -97,6 +97,10 @@ load test_helper
   # Individual hooks
   [ -x "$TARGET_DIR/.git/hooks/pre-commit.d/encryption" ]
   grep -q "git-crypt" "$TARGET_DIR/.git/hooks/pre-commit.d/encryption"
+  grep -qF "NOTES_TOOL_ROOT=\"$REPO_DIR\"" \
+    "$TARGET_DIR/.git/hooks/pre-commit.d/encryption"
+  grep -qF 'source "$NOTES_TOOL_ROOT/lib/encryption.sh"' \
+    "$TARGET_DIR/.git/hooks/pre-commit.d/encryption"
   [ -x "$TARGET_DIR/.git/hooks/pre-commit.d/obfuscation" ]
   grep -q "manifest" "$TARGET_DIR/.git/hooks/pre-commit.d/obfuscation"
 }
