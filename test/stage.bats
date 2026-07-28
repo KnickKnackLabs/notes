@@ -5,6 +5,14 @@
 load test_helper
 load changes_test_helper
 
+setup() {
+  setup_changes_fixture
+  export TARGET_DIR="$NOTES_CALLER_PWD"
+  install_encryption_hook
+  install_obfuscation_hook
+  install_double_tracking_hook
+}
+
 # ── stage via git add -f ─────────────────────────────────────
 
 @test "git add -f works despite exclude" {
@@ -67,6 +75,46 @@ load changes_test_helper
 
   run git -C "$NOTES_CALLER_PWD" diff --cached --name-only
   [[ "$output" == *"notes/gamma.md"* ]]
+}
+
+@test "notes stage refuses missing required hooks before index mutation" {
+  rm -rf "$NOTES_CALLER_PWD/.git/hooks/pre-commit" \
+    "$NOTES_CALLER_PWD/.git/hooks/pre-commit.d"
+  echo "# Alpha modified" > "$NOTES_CALLER_PWD/notes/alpha.md"
+
+  run notes stage alpha.md
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"pre-commit hooks are missing or stale"* ]]
+  [[ "$output" == *"notes install-hooks --yes"* ]]
+  run git -C "$NOTES_CALLER_PWD" diff --cached --name-only
+  [ -z "$output" ]
+}
+
+@test "notes stage refuses stale required hooks before index mutation" {
+  printf '\n# stale\n' >> \
+    "$NOTES_CALLER_PWD/.git/hooks/pre-commit.d/encryption"
+  echo "# Alpha modified" > "$NOTES_CALLER_PWD/notes/alpha.md"
+
+  run notes stage alpha.md
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"pre-commit hooks are missing or stale"* ]]
+  run git -C "$NOTES_CALLER_PWD" diff --cached --name-only
+  [ -z "$output" ]
+}
+
+@test "notes stage dry-run remains available without required hooks" {
+  rm -rf "$NOTES_CALLER_PWD/.git/hooks/pre-commit" \
+    "$NOTES_CALLER_PWD/.git/hooks/pre-commit.d"
+  echo "# Alpha modified" > "$NOTES_CALLER_PWD/notes/alpha.md"
+
+  run notes stage alpha.md --dry-run
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Would stage:"* ]]
+  run git -C "$NOTES_CALLER_PWD" diff --cached --name-only
+  [ -z "$output" ]
 }
 
 @test "notes stage: explicit unknown path fails instead of silently selecting nothing" {

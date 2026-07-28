@@ -1,4 +1,4 @@
-setup() {
+setup_changes_fixture() {
   export NOTES_CALLER_PWD="$BATS_TEST_TMPDIR"
   source "$REPO_DIR/lib/common.sh"
   source "$REPO_DIR/lib/obfuscate.sh"
@@ -22,6 +22,10 @@ setup() {
   git -C "$NOTES_CALLER_PWD" commit -q -m "initial"
   rename_to_readable "$NOTES_CALLER_PWD/notes" > /dev/null
   set_status_suppression "$NOTES_CALLER_PWD/notes"
+}
+
+setup() {
+  setup_changes_fixture
 }
 
 add_clean_numbered_notes() {

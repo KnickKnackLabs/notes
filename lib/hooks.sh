@@ -10,13 +10,15 @@ _hook_template_value() {
 }
 
 _render_notes_hook_template() {
-  local template="${1:?usage: _render_notes_hook_template <template> <notes-dir>}"
-  local notes_dir="${2:?usage: _render_notes_hook_template <template> <notes-dir>}"
-  local mise_bin
-  mise_bin=$(command -v mise) || {
-    echo "Error: mise not found; cannot install notes hooks" >&2
-    return 1
-  }
+  local template="${1:?usage: _render_notes_hook_template <template> <notes-dir> [mise-bin]}"
+  local notes_dir="${2:?usage: _render_notes_hook_template <template> <notes-dir> [mise-bin]}"
+  local mise_bin="${3:-}"
+  if [ -z "$mise_bin" ]; then
+    mise_bin=$(command -v mise) || {
+      echo "Error: mise not found; cannot install notes hooks" >&2
+      return 1
+    }
+  fi
 
   sed \
     -e "s|__NOTES_DIR__|$(_hook_template_value "$notes_dir")|g" \
@@ -72,6 +74,57 @@ install_double_tracking_hook() {
   local target="$TARGET_DIR/.git/hooks/pre-commit.d/verify-double-tracking"
   _render_notes_hook_template "$HOOKS_DIR/verify-double-tracking.template" "$notes_dir" > "$target"
   chmod +x "$target"
+}
+
+_installed_hook_matches() {
+  local template="${1:?usage: _installed_hook_matches <template> <notes-dir> <installed-hook> [mise-bin]}"
+  local notes_dir="${2:?usage: _installed_hook_matches <template> <notes-dir> <installed-hook> [mise-bin]}"
+  local installed="${3:?usage: _installed_hook_matches <template> <notes-dir> <installed-hook> [mise-bin]}"
+  local mise_bin="${4:-}"
+  local expected
+
+  [ -x "$installed" ] || return 1
+  expected=$(mktemp) || return 1
+  if ! _render_notes_hook_template \
+    "$template" "$notes_dir" "$mise_bin" > "$expected"; then
+    rm -f "$expected"
+    return 1
+  fi
+  if cmp -s "$expected" "$installed"; then
+    rm -f "$expected"
+    return 0
+  fi
+  rm -f "$expected"
+  return 1
+}
+
+required_pre_commit_hooks_ready() {
+  local notes_dir="${1:-notes}"
+  local hooks_dir="$TARGET_DIR/.git/hooks"
+  local dispatcher="$hooks_dir/pre-commit"
+  local fragments="$hooks_dir/pre-commit.d"
+  local obfuscation_hook="$fragments/obfuscation"
+  local installed_mise_bin
+
+  [ -x "$dispatcher" ] || return 1
+  if ! cmp -s "$HOOKS_DIR/dispatcher" "$dispatcher" \
+    && ! grep -qF 'pre-commit.d' "$dispatcher" 2>/dev/null; then
+    return 1
+  fi
+  [ -x "$obfuscation_hook" ] || return 1
+  installed_mise_bin=$(sed -n 's/^MISE_BIN="\(.*\)"$/\1/p' \
+    "$obfuscation_hook")
+  [ -n "$installed_mise_bin" ] || return 1
+  [ -x "$installed_mise_bin" ] || return 1
+  _installed_hook_matches \
+    "$HOOKS_DIR/encryption.template" "." "$fragments/encryption" \
+    "$installed_mise_bin" || return 1
+  _installed_hook_matches \
+    "$HOOKS_DIR/obfuscation.template" "$notes_dir" "$obfuscation_hook" \
+    "$installed_mise_bin" || return 1
+  _installed_hook_matches \
+    "$HOOKS_DIR/verify-double-tracking.template" "$notes_dir" \
+    "$fragments/verify-double-tracking" "$installed_mise_bin" || return 1
 }
 
 # Install the manifest merge driver.

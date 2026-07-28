@@ -217,9 +217,10 @@ HOOK
 # ── full lifecycle ────────────────────────────────────────────
 
 @test "full cycle: edit → stage → commit → clean status" {
-  # Install hooks so post-commit deobfuscates
   source "$REPO_DIR/lib/hooks.sh"
+  install_encryption_hook
   install_obfuscation_hook
+  install_double_tracking_hook
   install_deobfuscation_hook
 
   # Verify clean status before edit
