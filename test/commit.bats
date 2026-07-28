@@ -255,3 +255,33 @@ HOOK
   run detect_changes "$NOTES_CALLER_PWD/notes"
   [ -z "$output" ]
 }
+
+@test "notes commit fails closed when committed-path inspection fails" {
+  local mock_bin="$BATS_TEST_TMPDIR/failing-diff-tree-git-bin"
+  local real_git before after
+  notes install-hooks --yes >/dev/null
+  printf '# Alpha changed\n' > "$NOTES_CALLER_PWD/notes/alpha.md"
+  before=$(git -C "$NOTES_CALLER_PWD" rev-parse HEAD)
+  real_git=$(command -v git)
+  mkdir -p "$mock_bin"
+  cat > "$mock_bin/git" <<'SH'
+#!/usr/bin/env bash
+case " $* " in
+  *" diff-tree "*)
+    printf '%s\n' "committed path inspection failed" >&2
+    exit 73
+    ;;
+esac
+exec "$REAL_GIT" "$@"
+SH
+  chmod +x "$mock_bin/git"
+
+  PATH="$mock_bin:$PATH" REAL_GIT="$real_git" \
+    run notes commit -m "update alpha" alpha.md
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"failed to inspect committed paths"* ]]
+  [[ "$output" == *"post-commit verification failed"* ]]
+  after=$(git -C "$NOTES_CALLER_PWD" rev-parse HEAD)
+  [ "$after" != "$before" ]
+}

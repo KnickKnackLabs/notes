@@ -751,3 +751,34 @@ EOT
   # And real.md wasn't obfuscated either (fail-fast = no partial state)
   [ -f "$NOTES_CALLER_PWD/notes/real.md" ]
 }
+
+@test "obfuscate fails before mutation when corpus enumeration fails" {
+  local mock_bin="$BATS_TEST_TMPDIR/failing-find-bin"
+  mkdir -p "$mock_bin"
+  cat > "$mock_bin/find" <<'SH'
+#!/usr/bin/env bash
+exit 73
+SH
+  chmod +x "$mock_bin/find"
+
+  PATH="$mock_bin:$PATH" run notes obfuscate
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"failed to enumerate readable note candidates"* ]]
+  [ -f "$NOTES_CALLER_PWD/notes/alpha.md" ]
+  [ -f "$NOTES_CALLER_PWD/notes/beta.md" ]
+  [ ! -f "$NOTES_CALLER_PWD/notes/.manifest" ]
+}
+
+@test "obfuscate fails instead of widening an unparsed file scope" {
+  local mock_bin="$BATS_TEST_TMPDIR/failing-xargs-bin"
+  make_failing_xargs_overlay "$mock_bin"
+
+  PATH="$mock_bin:$PATH" run notes obfuscate alpha.md
+
+  [ "$status" -eq 73 ]
+  [[ "$output" == *"failed to parse variadic arguments"* ]]
+  [ -f "$NOTES_CALLER_PWD/notes/alpha.md" ]
+  [ -f "$NOTES_CALLER_PWD/notes/beta.md" ]
+  [ ! -f "$NOTES_CALLER_PWD/notes/.manifest" ]
+}

@@ -15,14 +15,20 @@
 detect_dual_present_conflicts() {
   local abs_notes_dir="${1:?usage: detect_dual_present_conflicts <abs_notes_dir>}"
   local manifest="$abs_notes_dir/.manifest"
+  local comparison_status
   [ ! -f "$manifest" ] && return 0
 
   while IFS=$'\t' read -r id relpath; do
     [ -z "$id" ] && continue
     [ -f "$abs_notes_dir/$id" ] || continue
     [ -f "$abs_notes_dir/$relpath" ] || continue
-    cmp -s "$abs_notes_dir/$id" "$abs_notes_dir/$relpath" && continue
-    printf '%s\t%s\n' "$id" "$relpath"
+    comparison_status=0
+    cmp -s "$abs_notes_dir/$id" "$abs_notes_dir/$relpath" || comparison_status=$?
+    case "$comparison_status" in
+      0) continue ;;
+      1) printf '%s\t%s\n' "$id" "$relpath" ;;
+      *) return "$comparison_status" ;;
+    esac
   done < "$manifest"
 }
 
@@ -182,8 +188,10 @@ _classify_fallback_changes() {
     exec 6<&-
   else
     while IFS=$'\t' read -r id relpath head_hash; do
-      disk_hash=$(git -C "$repo_root" hash-object \
-        --path="$notes_dir/$id" "$abs_notes_dir/$relpath" 2>/dev/null) || continue
+      if ! disk_hash=$(git -C "$repo_root" hash-object \
+        --path="$notes_dir/$id" "$abs_notes_dir/$relpath" 2>/dev/null); then
+        return 1
+      fi
       [ "$head_hash" != "$disk_hash" ] && printf 'modified\t%s\n' "$relpath" >> "$workspace/detected"
     done < "$workspace/fallback-meta"
   fi
@@ -194,7 +202,8 @@ _classify_fallback_changes() {
 _classify_unmanaged_files() {
   local abs_notes_dir="$1" workspace="$2"
 
-  find "$abs_notes_dir" -type f | sort > "$workspace/all-files" || return 1
+  find "$abs_notes_dir" -type f > "$workspace/all-files-unsorted" || return 1
+  sort "$workspace/all-files-unsorted" > "$workspace/all-files" || return 1
   awk \
     -v ids_file="$workspace/manifest-ids" \
     -v names_file="$workspace/manifest-names" \
@@ -229,35 +238,51 @@ _classify_unmanaged_files() {
 detect_changes() {
   local abs_notes_dir="${1:?usage: detect_changes <abs_notes_dir>}"
   local manifest="$abs_notes_dir/.manifest"
-  [ ! -f "$manifest" ] && return
+  [ ! -f "$manifest" ] && return 0
 
   resolve_notes_dir "$abs_notes_dir" || return
   local repo_root="$RESOLVED_REPO_ROOT"
   local notes_dir="$RESOLVED_NOTES_DIR"
-  local workspace
+  local workspace rc=0
   workspace=$(mktemp -d) || return
   : > "$workspace/detected"
 
-  if ! _prepare_change_detection_workspace "$abs_notes_dir" "$repo_root" "$notes_dir" "$workspace"; then
+  if _prepare_change_detection_workspace "$abs_notes_dir" "$repo_root" "$notes_dir" "$workspace"; then
+    :
+  else
+    rc=$?
     rm -rf "$workspace"
-    return
+    return "$rc"
   fi
-  if ! _classify_manifest_changes "$abs_notes_dir" "$notes_dir" "$workspace"; then
+  if _classify_manifest_changes "$abs_notes_dir" "$notes_dir" "$workspace"; then
+    :
+  else
+    rc=$?
     rm -rf "$workspace"
-    return
+    return "$rc"
   fi
-  if ! _classify_fallback_changes "$repo_root" "$notes_dir" "$abs_notes_dir" "$workspace"; then
+  if _classify_fallback_changes "$repo_root" "$notes_dir" "$abs_notes_dir" "$workspace"; then
+    :
+  else
+    rc=$?
     rm -rf "$workspace"
-    return
+    return "$rc"
+  fi
+  if _classify_unmanaged_files "$abs_notes_dir" "$workspace" > "$workspace/unmanaged"; then
+    :
+  else
+    rc=$?
+    rm -rf "$workspace"
+    return "$rc"
+  fi
+  if ! cat "$workspace/unmanaged" >> "$workspace/detected"; then
+    rm -rf "$workspace"
+    return 1
   fi
 
-  cat "$workspace/detected"
-  if ! _classify_unmanaged_files "$abs_notes_dir" "$workspace"; then
-    rm -rf "$workspace"
-    return
-  fi
-
+  cat "$workspace/detected" || rc=$?
   rm -rf "$workspace"
+  return "$rc"
 }
 
 # Print ordinary diff output while preserving genuine diff execution failures.

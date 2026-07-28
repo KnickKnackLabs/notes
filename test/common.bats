@@ -225,3 +225,28 @@ SH
   [ "$status" -eq 0 ]
   [ "$output" = $'abc12345\tback\\slash.md\ndef67890\tdouble"quote.md' ]
 }
+
+@test "parse_variadic_args preserves quoted argument boundaries" {
+  run parse_variadic_args "'alpha one.md' beta.md"
+
+  [ "$status" -eq 0 ]
+  [ "$output" = $'alpha one.md\nbeta.md' ]
+}
+
+@test "parse_variadic_args propagates parser failure" {
+  local mock_bin="$BATS_TEST_TMPDIR/failing-xargs-bin"
+  make_failing_xargs_overlay "$mock_bin"
+
+  PATH="$mock_bin:$PATH" run parse_variadic_args "alpha.md"
+
+  [ "$status" -eq 73 ]
+  [[ "$output" == *"failed to parse variadic arguments"* ]]
+}
+
+@test "variadic task arguments use the checked shared parser" {
+  local task
+  for task in changes commit deobfuscate diff obfuscate setup stage test; do
+    grep -q 'parse_variadic_args' "$REPO_DIR/.mise/tasks/$task"
+    ! grep -Eq 'done < <\(.*xargs' "$REPO_DIR/.mise/tasks/$task"
+  done
+}

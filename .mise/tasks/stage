@@ -24,12 +24,20 @@ fi
 # Parse variadic args
 ARGS=()
 if [ -n "${usage_files:-}" ]; then
+  args_snapshot=$(mktemp) || { echo "Error: failed to create argument snapshot" >&2; exit 1; }
+  parse_status=0
+  parse_variadic_args "$usage_files" > "$args_snapshot" || parse_status=$?
+  if [ "$parse_status" -ne 0 ]; then
+    rm -f "$args_snapshot"
+    exit "$parse_status"
+  fi
   while IFS= read -r arg; do
     arg="${arg#"${notes_dir}/"}"
     # Skip empty variadic defaults after xargs unquotes "''".
     [ -z "$arg" ] && continue
     ARGS+=("$arg")
-  done < <(printf '%s' "${usage_files}" | xargs printf '%s\n')
+  done < "$args_snapshot"
+  rm -f "$args_snapshot"
 fi
 
 scope_all="${usage_all:-false}"
@@ -60,8 +68,11 @@ scope_matches() {
 }
 
 # Detect changes. An unavailable manifest is a clean result.
-if ! changes=$(detect_changes "$abs_notes_dir"); then
-  changes=""
+detect_status=0
+changes=$(detect_changes "$abs_notes_dir") || detect_status=$?
+if [ "$detect_status" -ne 0 ]; then
+  echo "Error: failed to inspect note changes." >&2
+  exit "$detect_status"
 fi
 
 if [ "$scope_all" != "true" ]; then
@@ -111,8 +122,12 @@ if [ ${#stale_notes[@]} -gt 0 ]; then
   exit 1
 fi
 
-if ! conflicting_notes=$(detect_dual_present_conflicts "$abs_notes_dir"); then
-  conflicting_notes=""
+conflicting_notes=""
+conflicting_notes_status=0
+conflicting_notes=$(detect_dual_present_conflicts "$abs_notes_dir") || conflicting_notes_status=$?
+if [ "$conflicting_notes_status" -ne 0 ]; then
+  echo "Error: failed to inspect dual-present note paths." >&2
+  exit "$conflicting_notes_status"
 fi
 if [ -n "$conflicting_notes" ]; then
   blocked_conflicts=()
@@ -140,8 +155,11 @@ if [ -n "$conflicting_notes" ]; then
 fi
 
 double_tracked=""
-if ! double_tracked=$(detect_double_tracked_notes "$TARGET_DIR" "$notes_dir" 2>/dev/null); then
-  double_tracked=""
+double_tracked_status=0
+double_tracked=$(detect_double_tracked_notes "$TARGET_DIR" "$notes_dir") || double_tracked_status=$?
+if [ "$double_tracked_status" -ne 0 ]; then
+  echo "Error: failed to inspect double-tracked note paths." >&2
+  exit "$double_tracked_status"
 fi
 if [ -n "$double_tracked" ]; then
   blocked_tracked=()

@@ -2,6 +2,23 @@
 
 load test_helper
 
+setup_failing_encrypted_note_enumeration_overlay() {
+  FAILING_FIND_BIN="$BATS_TEST_TMPDIR/failing-encrypted-note-find"
+  local real_find
+  real_find=$(command -v find)
+  mkdir -p "$FAILING_FIND_BIN"
+  cat > "$FAILING_FIND_BIN/find" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = "$NOTES_CALLER_PWD/notes" ] && [[ " $* " == *" -print0 "* ]]; then
+  echo "encrypted note enumeration failed" >&2
+  exit 73
+fi
+exec "$REAL_FIND" "$@"
+SH
+  chmod +x "$FAILING_FIND_BIN/find"
+  export REAL_FIND="$real_find"
+}
+
 @test "is_initialized returns false on fresh repo" {
   run is_initialized
   [ "$status" -ne 0 ]
@@ -231,6 +248,16 @@ generate_test_key() {
   [ "$status" -eq 0 ]
   echo "$output" | grep -q "notes unlock"
   echo "$output" | grep -q "already has encrypted notes"
+}
+
+@test "setup fails when existing encrypted notes cannot be enumerated" {
+  setup_failing_encrypted_note_enumeration_overlay
+
+  PATH="$FAILING_FIND_BIN:$PATH" run notes setup --yes
+
+  [ "$status" -eq 73 ]
+  [[ "$output" == *"failed to inspect existing encrypted notes"* ]]
+  [[ "$output" != *"Done! Next steps"* ]]
 }
 
 @test "setup shows standard next steps on fresh repo" {

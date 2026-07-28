@@ -69,6 +69,15 @@ else
 fi
 
 # ── 2. Walk all tracked blobs under notes dir ──────────────────
+tracked_blob_snapshot=$(mktemp) || { echo "Error: failed to create tracked blob snapshot" >&2; exit 1; }
+tracked_blob_status=0
+git ls-tree -r -z --name-only "$ref" -- "$notes_dir/" > "$tracked_blob_snapshot" || tracked_blob_status=$?
+if [ "$tracked_blob_status" -ne 0 ]; then
+  rm -f "$tracked_blob_snapshot"
+  echo "Error: failed to enumerate note blobs in ref '$ref'." >&2
+  exit "$tracked_blob_status"
+fi
+
 while IFS= read -r -d '' path; do
   [ -z "$path" ] && continue
   [[ "$path" == "$manifest_path" ]] && continue
@@ -86,7 +95,8 @@ while IFS= read -r -d '' path; do
     errors=$((errors + 1))
     error_paths+=("$path")
   fi
-done < <(git ls-tree -r -z --name-only "$ref" -- "$notes_dir/" 2>/dev/null)
+done < "$tracked_blob_snapshot"
+rm -f "$tracked_blob_snapshot"
 
 # ── 3. Strict mode: check working tree cleanliness ────────────
 if [ "$strict" = "true" ]; then

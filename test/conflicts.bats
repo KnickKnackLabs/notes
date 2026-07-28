@@ -280,3 +280,30 @@ create_conflicted_gitcrypt_header_repo() {
   [ "$status" -eq 0 ]
   echo "$output" | jq -e '.unmerged_content_conflicts.conflicts == 1'
 }
+
+@test "conflict commands propagate unmerged-path inspection failure" {
+  local mock_bin="$BATS_TEST_TMPDIR/failing-conflict-git-bin"
+  local real_git
+  real_git=$(command -v git)
+  mkdir -p "$mock_bin"
+  cat > "$mock_bin/git" <<'SH'
+#!/usr/bin/env bash
+case " $* " in
+  *" ls-files -u "*)
+    printf '%s\n' "unmerged path inspection failed" >&2
+    exit 73
+    ;;
+esac
+exec "$REAL_GIT" "$@"
+SH
+  chmod +x "$mock_bin/git"
+
+  PATH="$mock_bin:$PATH" REAL_GIT="$real_git" \
+    run notes conflicts --out "$BATS_TEST_TMPDIR/conflict-output"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"unmerged path inspection failed"* ]]
+
+  PATH="$mock_bin:$PATH" REAL_GIT="$real_git" run notes status --json
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"failed to inspect unmerged note conflicts"* ]]
+}

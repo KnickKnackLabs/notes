@@ -144,3 +144,15 @@ logged_arguments() {
   [ ! -e "$bats_log" ]
   [ ! -e "$uv_log" ]
 }
+
+@test "test task propagates variadic parser failure" {
+  local failing_xargs_bin="$BATS_TEST_TMPDIR/failing-xargs-bin"
+  make_failing_xargs_overlay "$failing_xargs_bin"
+
+  PATH="$failing_xargs_bin:$PATH" run notes test changes
+
+  [ "$status" -eq 73 ]
+  [[ "$output" == *"failed to parse variadic arguments"* ]]
+  [ ! -e "$bats_log" ]
+  [ ! -e "$uv_log" ]
+}

@@ -35,6 +35,17 @@ without_confirmation() (
 )
 export -f without_confirmation
 
+make_failing_xargs_overlay() {
+  local bin_dir="$1"
+  mkdir -p "$bin_dir"
+  cat > "$bin_dir/xargs" <<'SH'
+#!/usr/bin/env bash
+exit 73
+SH
+  chmod +x "$bin_dir/xargs"
+}
+export -f make_failing_xargs_overlay
+
 # rudi() wrapper — calls rudi against the same target repo.
 rudi() {
   if [ -z "${NOTES_CALLER_PWD:-}" ]; then

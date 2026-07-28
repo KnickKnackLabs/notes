@@ -58,8 +58,11 @@ fi
 incomplete_deobfuscation=""
 incomplete_conflicts=0
 if [ "$enc_status" != "locked" ] && [ -f "$NOTES_DIR/.manifest" ]; then
-  if ! incomplete_deobfuscation=$(detect_dual_present_conflicts "$TARGET_DIR/$NOTES_DIR" 2>/dev/null); then
-    incomplete_deobfuscation=""
+  incomplete_deobfuscation_status=0
+  incomplete_deobfuscation=$(detect_dual_present_conflicts "$TARGET_DIR/$NOTES_DIR") || incomplete_deobfuscation_status=$?
+  if [ "$incomplete_deobfuscation_status" -ne 0 ]; then
+    echo "Error: failed to inspect dual-present note paths." >&2
+    exit "$incomplete_deobfuscation_status"
   fi
   if [ -n "$incomplete_deobfuscation" ]; then
     incomplete_conflicts=$(printf '%s\n' "$incomplete_deobfuscation" | wc -l | tr -d ' ')
@@ -69,8 +72,11 @@ fi
 # --- Double-tracked notes (readable + obfuscated both tracked) ---
 
 double_tracked=""
-if ! double_tracked=$(detect_double_tracked_notes "$TARGET_DIR" "$NOTES_DIR" 2>/dev/null); then
-  double_tracked=""
+double_tracked_status=0
+double_tracked=$(detect_double_tracked_notes "$TARGET_DIR" "$NOTES_DIR") || double_tracked_status=$?
+if [ "$double_tracked_status" -ne 0 ]; then
+  echo "Error: failed to inspect double-tracked note paths." >&2
+  exit "$double_tracked_status"
 fi
 double_tracked_count=0
 if [ -n "$double_tracked" ]; then
@@ -80,9 +86,16 @@ fi
 # --- Unmerged encrypted/obfuscated note content conflicts ---
 
 unmerged_content_conflicts=""
-if ! unmerged_content_conflicts=$(notes_conflict_records "$TARGET_DIR" "$NOTES_DIR" allow-unmapped 2>/dev/null); then
-  unmerged_content_conflicts=""
+conflict_error=$(mktemp) || { echo "Error: failed to create conflict error snapshot" >&2; exit 1; }
+conflict_status=0
+unmerged_content_conflicts=$(notes_conflict_records "$TARGET_DIR" "$NOTES_DIR" allow-unmapped 2> "$conflict_error") || conflict_status=$?
+if [ "$conflict_status" -ne 0 ]; then
+  cat "$conflict_error" >&2
+  rm -f "$conflict_error"
+  echo "Error: failed to inspect unmerged note conflicts." >&2
+  exit "$conflict_status"
 fi
+rm -f "$conflict_error"
 unmerged_content_conflict_count=0
 if [ -n "$unmerged_content_conflicts" ]; then
   unmerged_content_conflict_count=$(printf '%s\n' "$unmerged_content_conflicts" | wc -l | tr -d ' ')
@@ -96,8 +109,11 @@ changes_deleted=0
 changes_stale=0
 
 if [ "$obf_status" = "deobfuscated" ]; then
-  if ! changes=$(detect_changes "$TARGET_DIR/$NOTES_DIR" 2>/dev/null); then
-    changes=""
+  detect_status=0
+  changes=$(detect_changes "$TARGET_DIR/$NOTES_DIR") || detect_status=$?
+  if [ "$detect_status" -ne 0 ]; then
+    echo "Error: failed to inspect note changes." >&2
+    exit "$detect_status"
   fi
   if [ -n "$changes" ]; then
     while IFS=$'\t' read -r chg_status chg_relpath; do

@@ -53,6 +53,18 @@ generate_test_key() {
   [ -f "$TARGET_DIR/.git-crypt/keys/default/0/$fpr.gpg" ]
 }
 
+@test "setup parses variadic configuration before mutation" {
+  local mock_bin="$BATS_TEST_TMPDIR/failing-xargs-bin"
+  make_failing_xargs_overlay "$mock_bin"
+
+  PATH="$mock_bin:$PATH" run notes setup --yes --pattern 'notes/**'
+
+  [ "$status" -eq 73 ]
+  [[ "$output" == *"failed to parse variadic arguments"* ]]
+  [ ! -e "$TARGET_DIR/.git-crypt" ]
+  [ ! -e "$TARGET_DIR/.gitattributes" ]
+}
+
 # --- lock / unlock round-trip ---
 
 @test "lock and unlock round-trip preserves file content" {
@@ -707,6 +719,31 @@ run_double_tracking_hook() {
 
   run_double_tracking_hook
   [ "$status" -eq 0 ]
+}
+
+@test "double-tracking hook propagates tracked-path inspection failure" {
+  local mock_bin="$BATS_TEST_TMPDIR/failing-double-tracking-git"
+  local real_git
+  real_git=$(command -v git)
+  notes setup --yes
+  mkdir -p "$mock_bin"
+  cat > "$mock_bin/git" <<'SH'
+#!/usr/bin/env bash
+case " $* " in
+  *" ls-files -z -- notes ")
+    echo "tracked-path inspection failed" >&2
+    exit 73
+    ;;
+esac
+exec "$REAL_GIT" "$@"
+SH
+  chmod +x "$mock_bin/git"
+  export REAL_GIT="$real_git"
+
+  PATH="$mock_bin:$PATH" run_double_tracking_hook
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"failed to inspect double-tracked note paths"* ]]
 }
 
 @test "double-tracking hook blocks commit when readable + obfuscated both tracked (#51)" {
