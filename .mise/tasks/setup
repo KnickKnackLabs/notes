@@ -158,12 +158,21 @@ else
   # (i.e., joining an existing repo vs creating a new one).
   has_encrypted_notes=false
   if [ -d "$TARGET_DIR/$NOTES_DIR" ]; then
+    encrypted_notes_snapshot=$(mktemp) || { echo "Error: failed to create encrypted note snapshot" >&2; exit 1; }
+    encrypted_notes_status=0
+    find "$TARGET_DIR/$NOTES_DIR" -type f ! -name .manifest -print0 > "$encrypted_notes_snapshot" || encrypted_notes_status=$?
+    if [ "$encrypted_notes_status" -ne 0 ]; then
+      rm -f "$encrypted_notes_snapshot"
+      echo "Error: failed to inspect existing encrypted notes." >&2
+      exit "$encrypted_notes_status"
+    fi
     while IFS= read -r -d '' f; do
       if head -c 10 "$f" 2>/dev/null | grep -q "GITCRYPT"; then
         has_encrypted_notes=true
         break
       fi
-    done < <(find "$TARGET_DIR/$NOTES_DIR" -type f ! -name .manifest -print0 2>/dev/null)
+    done < "$encrypted_notes_snapshot"
+    rm -f "$encrypted_notes_snapshot"
   fi
 
   echo ""

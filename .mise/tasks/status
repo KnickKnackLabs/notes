@@ -58,8 +58,11 @@ fi
 incomplete_deobfuscation=""
 incomplete_conflicts=0
 if [ "$enc_status" != "locked" ] && [ -f "$NOTES_DIR/.manifest" ]; then
-  if ! incomplete_deobfuscation=$(detect_dual_present_conflicts "$TARGET_DIR/$NOTES_DIR" 2>/dev/null); then
-    incomplete_deobfuscation=""
+  incomplete_deobfuscation_status=0
+  incomplete_deobfuscation=$(detect_dual_present_conflicts "$TARGET_DIR/$NOTES_DIR") || incomplete_deobfuscation_status=$?
+  if [ "$incomplete_deobfuscation_status" -ne 0 ]; then
+    echo "Error: failed to inspect dual-present note paths." >&2
+    exit "$incomplete_deobfuscation_status"
   fi
   if [ -n "$incomplete_deobfuscation" ]; then
     incomplete_conflicts=$(printf '%s\n' "$incomplete_deobfuscation" | wc -l | tr -d ' ')

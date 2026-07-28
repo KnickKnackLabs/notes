@@ -31,6 +31,17 @@ SH
   export REAL_GIT="$real_git"
 }
 
+setup_failing_content_comparison_overlay() {
+  FAILING_CMP_BIN="$BATS_TEST_TMPDIR/failing-cmp-bin"
+  mkdir -p "$FAILING_CMP_BIN"
+  cat > "$FAILING_CMP_BIN/cmp" <<'SH'
+#!/usr/bin/env bash
+echo "content comparison failed" >&2
+exit 73
+SH
+  chmod +x "$FAILING_CMP_BIN/cmp"
+}
+
 # ── detect_changes ────────────────────────────────────────────
 
 @test "detect_changes: no changes when files match HEAD" {
@@ -310,6 +321,24 @@ SH
   PATH="$FAILING_GIT_BIN:$PATH" run notes status --json
   [ "$status" -ne 0 ]
   [[ "$output" == *"failed to inspect double-tracked note paths"* ]]
+}
+
+@test "safety consumers propagate dual-present content inspection failure" {
+  local alpha_id
+  alpha_id=$(manifest_id_for_name "$MANIFEST" "alpha.md")
+  cp "$NOTES_CALLER_PWD/notes/alpha.md" "$NOTES_CALLER_PWD/notes/$alpha_id"
+  printf '# Alpha modified\n' > "$NOTES_CALLER_PWD/notes/alpha.md"
+  setup_failing_content_comparison_overlay
+
+  PATH="$FAILING_CMP_BIN:$PATH" run notes stage alpha.md
+  [ "$status" -eq 73 ]
+  [[ "$output" == *"failed to inspect dual-present note paths"* ]]
+  run git -C "$NOTES_CALLER_PWD" diff --cached --name-only
+  [ -z "$output" ]
+
+  PATH="$FAILING_CMP_BIN:$PATH" run notes status --json
+  [ "$status" -eq 73 ]
+  [[ "$output" == *"failed to inspect dual-present note paths"* ]]
 }
 
 @test "notes changes fails instead of widening an unparsed file scope" {

@@ -122,8 +122,12 @@ if [ ${#stale_notes[@]} -gt 0 ]; then
   exit 1
 fi
 
-if ! conflicting_notes=$(detect_dual_present_conflicts "$abs_notes_dir"); then
-  conflicting_notes=""
+conflicting_notes=""
+conflicting_notes_status=0
+conflicting_notes=$(detect_dual_present_conflicts "$abs_notes_dir") || conflicting_notes_status=$?
+if [ "$conflicting_notes_status" -ne 0 ]; then
+  echo "Error: failed to inspect dual-present note paths." >&2
+  exit "$conflicting_notes_status"
 fi
 if [ -n "$conflicting_notes" ]; then
   blocked_conflicts=()

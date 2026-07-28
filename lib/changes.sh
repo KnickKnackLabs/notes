@@ -15,14 +15,20 @@
 detect_dual_present_conflicts() {
   local abs_notes_dir="${1:?usage: detect_dual_present_conflicts <abs_notes_dir>}"
   local manifest="$abs_notes_dir/.manifest"
+  local comparison_status
   [ ! -f "$manifest" ] && return 0
 
   while IFS=$'\t' read -r id relpath; do
     [ -z "$id" ] && continue
     [ -f "$abs_notes_dir/$id" ] || continue
     [ -f "$abs_notes_dir/$relpath" ] || continue
-    cmp -s "$abs_notes_dir/$id" "$abs_notes_dir/$relpath" && continue
-    printf '%s\t%s\n' "$id" "$relpath"
+    comparison_status=0
+    cmp -s "$abs_notes_dir/$id" "$abs_notes_dir/$relpath" || comparison_status=$?
+    case "$comparison_status" in
+      0) continue ;;
+      1) printf '%s\t%s\n' "$id" "$relpath" ;;
+      *) return "$comparison_status" ;;
+    esac
   done < "$manifest"
 }
 
