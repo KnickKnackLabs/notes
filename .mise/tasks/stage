@@ -151,8 +151,11 @@ if [ -n "$conflicting_notes" ]; then
 fi
 
 double_tracked=""
-if ! double_tracked=$(detect_double_tracked_notes "$TARGET_DIR" "$notes_dir" 2>/dev/null); then
-  double_tracked=""
+double_tracked_status=0
+double_tracked=$(detect_double_tracked_notes "$TARGET_DIR" "$notes_dir") || double_tracked_status=$?
+if [ "$double_tracked_status" -ne 0 ]; then
+  echo "Error: failed to inspect double-tracked note paths." >&2
+  exit "$double_tracked_status"
 fi
 if [ -n "$double_tracked" ]; then
   blocked_tracked=()
