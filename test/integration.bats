@@ -567,6 +567,64 @@ SH
   [ "$(wc -l < "$calls" | tr -d ' ')" -eq 1 ]
 }
 
+@test "encryption hook fails closed when staged-path inspection fails (#49)" {
+  notes setup --yes
+
+  printf '%s\n' "public" > "$TARGET_DIR/public.md"
+  git -C "$TARGET_DIR" add public.md
+
+  local mock_bin="$BATS_TEST_TMPDIR/failing-encryption-diff-bin"
+  local real_git
+  real_git=$(command -v git)
+  mkdir -p "$mock_bin"
+  cat > "$mock_bin/git" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = "diff" ]; then
+  printf '%s\n' "staged inspection failed" >&2
+  exit 73
+fi
+exec "$REAL_GIT" "$@"
+SH
+  chmod +x "$mock_bin/git"
+  export PATH="$mock_bin:$PATH"
+  export REAL_GIT="$real_git"
+
+  run_encryption_hook
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"staged inspection failed"* ]]
+  [[ "$output" == *"Could not inspect staged paths for encryption"* ]]
+}
+
+@test "encryption hook fails closed when staged-attribute inspection fails (#49)" {
+  notes setup --yes
+
+  mkdir -p "$TARGET_DIR/notes"
+  printf '%s\n' "secret" > "$TARGET_DIR/notes/secret.md"
+  git -C "$TARGET_DIR" add notes/secret.md
+
+  local mock_bin="$BATS_TEST_TMPDIR/failing-encryption-attr-bin"
+  local real_git
+  real_git=$(command -v git)
+  mkdir -p "$mock_bin"
+  cat > "$mock_bin/git" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = "check-attr" ]; then
+  printf '%s\n' "attribute inspection failed" >&2
+  exit 74
+fi
+exec "$REAL_GIT" "$@"
+SH
+  chmod +x "$mock_bin/git"
+  export PATH="$mock_bin:$PATH"
+  export REAL_GIT="$real_git"
+
+  run_encryption_hook
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"attribute inspection failed"* ]]
+  [[ "$output" == *"Could not inspect staged encryption attributes"* ]]
+}
+
+
 @test "encryption hook falls back per path after a batched plaintext result (#49)" {
   notes setup --yes
   local fpr
