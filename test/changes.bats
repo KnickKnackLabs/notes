@@ -15,6 +15,22 @@ SH
   chmod +x "$FAILING_FIND_BIN/find"
 }
 
+setup_failing_tracked_path_inspection_overlay() {
+  FAILING_GIT_BIN="$BATS_TEST_TMPDIR/failing-git-bin"
+  local real_git
+  real_git=$(command -v git)
+  mkdir -p "$FAILING_GIT_BIN"
+  cat > "$FAILING_GIT_BIN/git" <<'SH'
+#!/usr/bin/env bash
+case " $* " in
+  *" ls-files -z -- notes ") exit 73 ;;
+esac
+exec "$REAL_GIT" "$@"
+SH
+  chmod +x "$FAILING_GIT_BIN/git"
+  export REAL_GIT="$real_git"
+}
+
 # ── detect_changes ────────────────────────────────────────────
 
 @test "detect_changes: no changes when files match HEAD" {
@@ -279,6 +295,21 @@ SH
   PATH="$FAILING_FIND_BIN:$PATH" run notes status --json
   [ "$status" -ne 0 ]
   [[ "$output" == *"failed to inspect note changes"* ]]
+}
+
+@test "safety consumers propagate double-tracked path inspection failure" {
+  setup_failing_tracked_path_inspection_overlay
+  printf '# Alpha modified\n' > "$NOTES_CALLER_PWD/notes/alpha.md"
+
+  PATH="$FAILING_GIT_BIN:$PATH" run notes stage alpha.md
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"failed to inspect double-tracked note paths"* ]]
+  run git -C "$NOTES_CALLER_PWD" diff --cached --name-only
+  [ -z "$output" ]
+
+  PATH="$FAILING_GIT_BIN:$PATH" run notes status --json
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"failed to inspect double-tracked note paths"* ]]
 }
 
 @test "notes changes fails instead of widening an unparsed file scope" {
