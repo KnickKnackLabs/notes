@@ -104,6 +104,50 @@ setup() {
   [ -z "$output" ]
 }
 
+@test "notes stage refuses a dispatcher that does not run required fragments" {
+  cat > "$NOTES_CALLER_PWD/.git/hooks/pre-commit" <<'HOOK'
+#!/usr/bin/env bash
+# Looks compatible by mentioning pre-commit.d, but executes nothing.
+exit 0
+HOOK
+  chmod +x "$NOTES_CALLER_PWD/.git/hooks/pre-commit"
+  echo "# Alpha modified" > "$NOTES_CALLER_PWD/notes/alpha.md"
+
+  run notes stage alpha.md
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"pre-commit hooks are missing or stale"* ]]
+  run git -C "$NOTES_CALLER_PWD" diff --cached --name-only
+  [ -z "$output" ]
+
+  notes install-hooks --yes
+  run notes stage alpha.md
+  [ "$status" -eq 0 ]
+  git -C "$NOTES_CALLER_PWD" commit -q -m "repaired dispatcher"
+  run git -C "$NOTES_CALLER_PWD" show --name-only --format= HEAD
+  [[ "$output" != *"notes/alpha.md"* ]]
+}
+
+@test "notes stage checks and repairs the active core.hooksPath" {
+  git -C "$NOTES_CALLER_PWD" config core.hooksPath .active-hooks
+  echo "# Alpha modified" > "$NOTES_CALLER_PWD/notes/alpha.md"
+
+  run notes stage alpha.md
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"pre-commit hooks are missing or stale"* ]]
+  run git -C "$NOTES_CALLER_PWD" diff --cached --name-only
+  [ -z "$output" ]
+
+  notes install-hooks --yes
+  [ -x "$NOTES_CALLER_PWD/.active-hooks/pre-commit" ]
+  run notes stage alpha.md
+  [ "$status" -eq 0 ]
+  git -C "$NOTES_CALLER_PWD" commit -q -m "active hooks path"
+  run git -C "$NOTES_CALLER_PWD" show --name-only --format= HEAD
+  [[ "$output" != *"notes/alpha.md"* ]]
+}
+
 @test "notes stage dry-run remains available without required hooks" {
   rm -rf "$NOTES_CALLER_PWD/.git/hooks/pre-commit" \
     "$NOTES_CALLER_PWD/.git/hooks/pre-commit.d"
