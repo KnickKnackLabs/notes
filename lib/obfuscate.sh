@@ -120,12 +120,22 @@ build_obfuscation_plan() {
     done
   else
     local file relpath
+    if ! find "$notes_dir" -type f > "$workspace/found-files"; then
+      echo "Error: failed to enumerate readable note candidates" >&2
+      rm -rf "$workspace"
+      return 1
+    fi
+    if ! sort "$workspace/found-files" > "$workspace/sorted-files"; then
+      echo "Error: failed to sort readable note candidates" >&2
+      rm -rf "$workspace"
+      return 1
+    fi
     while IFS= read -r file; do
       [ -f "$file" ] || continue
       relpath="${file#"$notes_dir"/}"
       [[ "$relpath" == ".manifest" ]] && continue
       printf '%s\n' "$relpath" >> "$candidates"
-    done < <(find "$notes_dir" -type f | sort)
+    done < "$workspace/sorted-files"
   fi
 
   manifest_input="$manifest"

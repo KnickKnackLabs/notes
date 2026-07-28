@@ -5,10 +5,29 @@
 load test_helper
 load changes_test_helper
 
+setup_failing_find_overlay() {
+  FAILING_FIND_BIN="$BATS_TEST_TMPDIR/failing-find-bin"
+  mkdir -p "$FAILING_FIND_BIN"
+  cat > "$FAILING_FIND_BIN/find" <<'SH'
+#!/usr/bin/env bash
+exit 73
+SH
+  chmod +x "$FAILING_FIND_BIN/find"
+}
+
 # ── detect_changes ────────────────────────────────────────────
 
 @test "detect_changes: no changes when files match HEAD" {
   run detect_changes "$NOTES_CALLER_PWD/notes"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
+@test "detect_changes: missing manifest remains a clean result" {
+  rm -f "$NOTES_CALLER_PWD/notes/.manifest"
+
+  run detect_changes "$NOTES_CALLER_PWD/notes"
+
   [ "$status" -eq 0 ]
   [ -z "$output" ]
 }
@@ -230,4 +249,44 @@ SH
   run detect_changes "$repo/notes"
   [ "$status" -eq 0 ]
   [[ "$output" == *"modified"*"alpha.md"* ]]
+}
+
+@test "detect_changes fails atomically when corpus enumeration fails" {
+  echo "# Alpha modified" > "$NOTES_CALLER_PWD/notes/alpha.md"
+  setup_failing_find_overlay
+
+  PATH="$FAILING_FIND_BIN:$PATH" run detect_changes "$NOTES_CALLER_PWD/notes"
+
+  [ "$status" -ne 0 ]
+  [ -z "$output" ]
+}
+
+@test "working-tree commands propagate change detection failure" {
+  setup_failing_find_overlay
+
+  PATH="$FAILING_FIND_BIN:$PATH" run notes changes --summary
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"failed to inspect note changes"* ]]
+
+  PATH="$FAILING_FIND_BIN:$PATH" run notes diff
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"failed to inspect note changes"* ]]
+
+  PATH="$FAILING_FIND_BIN:$PATH" run notes stage alpha.md
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"failed to inspect note changes"* ]]
+
+  PATH="$FAILING_FIND_BIN:$PATH" run notes status --json
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"failed to inspect note changes"* ]]
+}
+
+@test "notes changes fails instead of widening an unparsed file scope" {
+  local mock_bin="$BATS_TEST_TMPDIR/failing-xargs-bin"
+  make_failing_xargs_overlay "$mock_bin"
+
+  PATH="$mock_bin:$PATH" run notes changes alpha.md
+
+  [ "$status" -eq 73 ]
+  [[ "$output" == *"failed to parse variadic arguments"* ]]
 }

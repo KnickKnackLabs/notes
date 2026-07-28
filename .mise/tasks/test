@@ -9,11 +9,21 @@
 #USAGE example "mise run test --jobs 1" header="Run BATS serially for debugging"
 set -euo pipefail
 
+source "$MISE_CONFIG_ROOT/lib/common.sh"
+
 arguments=()
 if [ -n "${usage_args:-}" ]; then
+  args_snapshot=$(mktemp) || { echo "Error: failed to create argument snapshot" >&2; exit 1; }
+  parse_status=0
+  parse_variadic_args "$usage_args" > "$args_snapshot" || parse_status=$?
+  if [ "$parse_status" -ne 0 ]; then
+    rm -f "$args_snapshot"
+    exit "$parse_status"
+  fi
   while IFS= read -r argument; do
     [ -z "$argument" ] || arguments+=("$argument")
-  done < <(printf '%s' "$usage_args" | xargs printf '%s\n')
+  done < "$args_snapshot"
+  rm -f "$args_snapshot"
 fi
 
 exec "$MISE_CONFIG_ROOT/libexec/test" ${arguments[@]+"${arguments[@]}"}

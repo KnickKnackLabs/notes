@@ -176,7 +176,28 @@ confirm_destructive() {
   esac
 }
 
-# ── Path helpers ────────────────────────────────────────────
+# Argument helpers
+
+# Parse mise's shell-quoted variadic argument string.
+#
+# Callers must snapshot this output before consuming it. A process substitution
+# would hide xargs/printf failures behind the consumer loop's exit status.
+# Usage: parse_variadic_args <raw-usage-value>
+parse_variadic_args() {
+  local raw="${1:-}" status=0
+  [ -n "$raw" ] || return 0
+
+  (
+    set -o pipefail
+    printf '%s' "$raw" | xargs printf '%s\n'
+  ) || status=$?
+  if [ "$status" -ne 0 ]; then
+    echo "Error: failed to parse variadic arguments." >&2
+    return "$status"
+  fi
+}
+
+# Path helpers
 
 # Resolve the notes directory path relative to the repo root.
 # Handles macOS symlinks (/tmp → /private/tmp) by resolving real paths.

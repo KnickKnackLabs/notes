@@ -30,6 +30,21 @@ setup() {
   [ -f "$NOTES_CALLER_PWD/notes/gamma.txt" ]
 }
 
+@test "deobfuscate fails instead of widening an unparsed file scope" {
+  local mock_bin="$BATS_TEST_TMPDIR/failing-xargs-bin"
+  local alpha_id
+  notes obfuscate
+  alpha_id=$(awk -F '\t' '$2 == "alpha.md" { print $1 }' "$NOTES_CALLER_PWD/notes/.manifest")
+  make_failing_xargs_overlay "$mock_bin"
+
+  PATH="$mock_bin:$PATH" run notes deobfuscate "$alpha_id"
+
+  [ "$status" -eq 73 ]
+  [[ "$output" == *"failed to parse variadic arguments"* ]]
+  [ -f "$NOTES_CALLER_PWD/notes/$alpha_id" ]
+  [ ! -f "$NOTES_CALLER_PWD/notes/alpha.md" ]
+}
+
 
 @test "full deobfuscation skips manifest lookup processes for absent IDs" {
   local i=1 id name restored_id="" counter_bin command real_command

@@ -53,6 +53,18 @@ generate_test_key() {
   [ -f "$TARGET_DIR/.git-crypt/keys/default/0/$fpr.gpg" ]
 }
 
+@test "setup parses variadic configuration before mutation" {
+  local mock_bin="$BATS_TEST_TMPDIR/failing-xargs-bin"
+  make_failing_xargs_overlay "$mock_bin"
+
+  PATH="$mock_bin:$PATH" run notes setup --yes --pattern 'notes/**'
+
+  [ "$status" -eq 73 ]
+  [[ "$output" == *"failed to parse variadic arguments"* ]]
+  [ ! -e "$TARGET_DIR/.git-crypt" ]
+  [ ! -e "$TARGET_DIR/.gitattributes" ]
+}
+
 # --- lock / unlock round-trip ---
 
 @test "lock and unlock round-trip preserves file content" {

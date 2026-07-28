@@ -22,12 +22,20 @@ fi
 # Limitation: backslashes in filenames are treated as escape characters by xargs.
 ARGS=()
 if [ -n "${usage_files:-}" ]; then
+  args_snapshot=$(mktemp) || { echo "Error: failed to create argument snapshot" >&2; exit 1; }
+  parse_status=0
+  parse_variadic_args "$usage_files" > "$args_snapshot" || parse_status=$?
+  if [ "$parse_status" -ne 0 ]; then
+    rm -f "$args_snapshot"
+    exit "$parse_status"
+  fi
   while IFS= read -r arg; do
     # Strip notes_dir prefix if provided (e.g. "notes/alpha.md" → "alpha.md")
     arg="${arg#"${notes_dir}/"}"
     [ -z "$arg" ] && continue
     ARGS+=("$arg")
-  done < <(printf '%s' "${usage_files}" | xargs printf '%s\n')
+  done < "$args_snapshot"
+  rm -f "$args_snapshot"
 fi
 
 plan=$(mktemp) || {

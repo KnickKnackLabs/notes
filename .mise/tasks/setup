@@ -17,6 +17,39 @@ cd "$TARGET_DIR"
 
 NOTES_DIR="${usage_dir:-notes}"
 
+keys=()
+if [ -n "${usage_gpg_key:-}" ]; then
+  args_snapshot=$(mktemp) || { echo "Error: failed to create argument snapshot" >&2; exit 1; }
+  parse_status=0
+  parse_variadic_args "$usage_gpg_key" > "$args_snapshot" || parse_status=$?
+  if [ "$parse_status" -ne 0 ]; then
+    rm -f "$args_snapshot"
+    exit "$parse_status"
+  fi
+  while IFS= read -r key; do
+    [ -n "$key" ] && keys+=("$key")
+  done < "$args_snapshot"
+  rm -f "$args_snapshot"
+fi
+
+patterns=()
+if [ -n "${usage_pattern:-}" ]; then
+  args_snapshot=$(mktemp) || { echo "Error: failed to create argument snapshot" >&2; exit 1; }
+  parse_status=0
+  parse_variadic_args "$usage_pattern" > "$args_snapshot" || parse_status=$?
+  if [ "$parse_status" -ne 0 ]; then
+    rm -f "$args_snapshot"
+    exit "$parse_status"
+  fi
+  while IFS= read -r pattern; do
+    [ -n "$pattern" ] && patterns+=("$pattern")
+  done < "$args_snapshot"
+  rm -f "$args_snapshot"
+fi
+if [ ${#patterns[@]} -eq 0 ]; then
+  patterns=("$NOTES_DIR/**")
+fi
+
 setup_confirmation_message="notes setup will initialize/update git-crypt, .gitattributes, $NOTES_DIR/.manifest, and git hooks for $NOTES_DIR/ in this repo."
 if [ "${usage_unlock:-false}" = "true" ]; then
   setup_confirmation_message="$setup_confirmation_message It will also unlock/decrypt all git-crypt files after setup."
@@ -32,13 +65,6 @@ else
 fi
 
 # --- Add GPG keys via rudi ---
-keys=()
-if [ -n "${usage_gpg_key:-}" ]; then
-  while IFS= read -r key; do
-    [ -n "$key" ] && keys+=("$key")
-  done < <(printf '%s' "$usage_gpg_key" | xargs printf '%s\n')
-fi
-
 if [ ${#keys[@]} -gt 0 ]; then
   echo ""
   echo "Adding GPG collaborators..."
@@ -77,16 +103,6 @@ gitattributes_has_encrypted_pattern() {
     END { exit(found ? 0 : 1) }
   ' "$GITATTRIBUTES" 2>/dev/null
 }
-
-patterns=()
-if [ -n "${usage_pattern:-}" ]; then
-  while IFS= read -r pattern; do
-    [ -n "$pattern" ] && patterns+=("$pattern")
-  done < <(printf '%s' "$usage_pattern" | xargs printf '%s\n')
-fi
-if [ ${#patterns[@]} -eq 0 ]; then
-  patterns=("$NOTES_DIR/**")
-fi
 
 missing_patterns=()
 for p in "${patterns[@]}"; do
