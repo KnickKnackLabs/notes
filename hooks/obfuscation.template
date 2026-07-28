@@ -20,15 +20,21 @@ run_notes() {
 
 build_staged_obfuscation_plan() {
   local candidates="$1" plan="$2"
+  local staged="$candidates.staged"
   local file relpath
   : > "$candidates"
 
+  if ! git diff --cached --name-only --diff-filter=ACMR > "$staged"; then
+    rm -f "$staged"
+    return 1
+  fi
   while IFS= read -r file; do
     [[ "$file" != "$NOTES_ROOT/"* ]] && continue
     relpath="${file#"$NOTES_ROOT/"}"
     [[ "$relpath" == ".manifest" ]] && continue
     printf '%s\n' "$relpath" >> "$candidates"
-  done < <(git diff --cached --name-only --diff-filter=ACMR)
+  done < "$staged"
+  rm -f "$staged"
 
   classify_obfuscation_candidates \
     "$NOTES_ROOT" "$NOTES_ROOT/.manifest" "$candidates" "$plan"

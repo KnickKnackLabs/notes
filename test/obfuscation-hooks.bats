@@ -198,6 +198,38 @@ SH
 }
 
 
+@test "obfuscation hook fails closed when staged-path inspection fails" {
+  notes setup --yes
+  git -C "$NOTES_CALLER_PWD" add -A
+  git -C "$NOTES_CALLER_PWD" commit --no-verify -q -m "setup"
+
+  printf '%s\n' "# Delta" > "$NOTES_CALLER_PWD/notes/delta.md"
+  git -C "$NOTES_CALLER_PWD" add notes/delta.md
+
+  local mock_bin="$BATS_TEST_TMPDIR/failing-obfuscation-git-bin"
+  local real_git
+  real_git=$(command -v git)
+  mkdir -p "$mock_bin"
+  cat > "$mock_bin/git" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = "diff" ]; then
+  printf '%s\n' "staged inspection failed" >&2
+  exit 73
+fi
+exec "$REAL_GIT" "$@"
+SH
+  chmod +x "$mock_bin/git"
+
+  run env PATH="$mock_bin:$PATH" REAL_GIT="$real_git" \
+    bash -c 'cd "$1" && .git/hooks/pre-commit.d/obfuscation' \
+      _ "$NOTES_CALLER_PWD"
+
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"staged inspection failed"* ]]
+  [[ "$output" == *"Could not classify staged note filenames"* ]]
+}
+
+
 @test "auto hook fails closed when a staged readable file is missing from disk" {
   notes setup --yes
   git -C "$NOTES_CALLER_PWD" add -A
