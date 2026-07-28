@@ -37,18 +37,72 @@ EOF
   return 0
 }
 
-# Build a corpus-level obfuscation plan.
+# Classify a prepared readable-path snapshot against one manifest snapshot.
 # Output rows are "<kind>\t<id-or-dash>\t<relpath>", where kind is
 # "known" for an existing manifest mapping or "new" for a new readable name.
 # Already-obfuscated IDs are omitted. The full plan is checked for orphan
 # hash-shaped names before any caller mutates the working tree.
+# Usage: classify_obfuscation_candidates <notes_dir> <manifest> <candidates> <plan>
+classify_obfuscation_candidates() {
+  local notes_dir="$1" manifest_input="$2" candidates="$3" plan_file="$4"
+
+  if ! awk -F '\t' -v OFS='\t' -v candidates="$candidates" '
+    FILENAME != candidates {
+      if ($1 != "") {
+        if (($1 in id_names) && id_names[$1] != $2) duplicate_ids[$1] = 1
+        id_names[$1] = $2
+        ids[$1] = 1
+        if (!($2 in names)) names[$2] = $1
+      }
+      next
+    }
+    {
+      relpath = $0
+      if (relpath == "" || seen[relpath]++) next
+      count = split(relpath, parts, "/")
+      base = parts[count]
+      if (base in ids) next
+      if (base ~ /^[a-f0-9]{8}$/) {
+        print "invalid", "-", relpath
+      } else if (relpath in names) {
+        if (names[relpath] in duplicate_ids) {
+          print "collision", names[relpath], relpath
+        } else {
+          print "known", names[relpath], relpath
+        }
+      } else {
+        print "new", "-", relpath
+      }
+    }
+  ' "$manifest_input" "$candidates" > "$plan_file"; then
+    return 1
+  fi
+
+  local kind id relpath
+  while IFS=$'\t' read -r kind id relpath; do
+    if [ "$kind" = "invalid" ]; then
+      refuse_if_hex_basename "$relpath"
+      return 1
+    fi
+    if [ "$kind" = "collision" ]; then
+      echo "Error: manifest ID '$id' maps to multiple readable paths" >&2
+      return 1
+    fi
+    if [ "$kind" = "known" ] && { [ -e "$notes_dir/$id" ] || [ -L "$notes_dir/$id" ]; }; then
+      echo "Error: refusing to overwrite existing obfuscated path: $id" >&2
+      return 1
+    fi
+  done < "$plan_file"
+}
+
+# Build a corpus-level obfuscation plan from readable files on disk.
 # Usage: build_obfuscation_plan <notes_dir> <plan_file> [file...]
 build_obfuscation_plan() {
   local notes_dir="$1" plan_file="$2"
   shift 2
   local scoped_files=("$@")
   local manifest="$notes_dir/.manifest"
-  local workspace candidates manifest_input
+  local workspace candidates manifest_input rc=0
 
   workspace=$(mktemp -d) || {
     echo "Error: failed to create obfuscation workspace" >&2
@@ -80,59 +134,10 @@ build_obfuscation_plan() {
     : > "$manifest_input"
   fi
 
-  if ! awk -F '\t' -v OFS='\t' -v candidates="$candidates" '
-    FILENAME != candidates {
-      if ($1 != "") {
-        if (($1 in id_names) && id_names[$1] != $2) duplicate_ids[$1] = 1
-        id_names[$1] = $2
-        ids[$1] = 1
-        if (!($2 in names)) names[$2] = $1
-      }
-      next
-    }
-    {
-      relpath = $0
-      if (relpath == "" || seen[relpath]++) next
-      count = split(relpath, parts, "/")
-      base = parts[count]
-      if (base in ids) next
-      if (base ~ /^[a-f0-9]{8}$/) {
-        print "invalid", "-", relpath
-      } else if (relpath in names) {
-        if (names[relpath] in duplicate_ids) {
-          print "collision", names[relpath], relpath
-        } else {
-          print "known", names[relpath], relpath
-        }
-      } else {
-        print "new", "-", relpath
-      }
-    }
-  ' "$manifest_input" "$candidates" > "$plan_file"; then
-    rm -rf "$workspace"
-    return 1
-  fi
-
-  local kind id
-  while IFS=$'\t' read -r kind id relpath; do
-    if [ "$kind" = "invalid" ]; then
-      rm -rf "$workspace"
-      refuse_if_hex_basename "$relpath"
-      return 1
-    fi
-    if [ "$kind" = "collision" ]; then
-      rm -rf "$workspace"
-      echo "Error: manifest ID '$id' maps to multiple readable paths" >&2
-      return 1
-    fi
-    if [ "$kind" = "known" ] && { [ -e "$notes_dir/$id" ] || [ -L "$notes_dir/$id" ]; }; then
-      rm -rf "$workspace"
-      echo "Error: refusing to overwrite existing obfuscated path: $id" >&2
-      return 1
-    fi
-  done < "$plan_file"
-
+  classify_obfuscation_candidates \
+    "$notes_dir" "$manifest_input" "$candidates" "$plan_file" || rc=$?
   rm -rf "$workspace"
+  return "$rc"
 }
 
 # Apply a precomputed obfuscation plan.

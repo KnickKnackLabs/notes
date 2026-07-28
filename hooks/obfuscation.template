@@ -9,6 +9,8 @@ NOTES_TOOL_ROOT="__NOTES_TOOL_ROOT__"
 MISE_BIN="__MISE_BIN__"
 MODE="${NOTES_OBFUSCATE_HOOK:-auto}"
 
+source "$NOTES_TOOL_ROOT/lib/obfuscate.sh"
+
 run_notes() {
   local repo_root
   repo_root="$(git rev-parse --show-toplevel)"
@@ -16,17 +18,43 @@ run_notes() {
   (cd "$NOTES_TOOL_ROOT" && "$MISE_BIN" run -q "$@")
 }
 
-if [ -f "$NOTES_ROOT/.manifest" ]; then
-  unobfuscated=()
+build_staged_obfuscation_plan() {
+  local candidates="$1" plan="$2"
+  local file relpath
+  : > "$candidates"
+
   while IFS= read -r file; do
     [[ "$file" != "$NOTES_ROOT/"* ]] && continue
-    base=$(basename "$file")
-    [[ "$base" == ".manifest" ]] && continue
-    # Check if basename is a known ID in the manifest
-    if ! grep -q "^${base}	" "$NOTES_ROOT/.manifest"; then
-      unobfuscated+=("$file")
-    fi
+    relpath="${file#"$NOTES_ROOT/"}"
+    [[ "$relpath" == ".manifest" ]] && continue
+    printf '%s\n' "$relpath" >> "$candidates"
   done < <(git diff --cached --name-only --diff-filter=ACMR)
+
+  classify_obfuscation_candidates \
+    "$NOTES_ROOT" "$NOTES_ROOT/.manifest" "$candidates" "$plan"
+}
+
+if [ -f "$NOTES_ROOT/.manifest" ]; then
+  candidates=$(mktemp) || {
+    echo "ERROR: Failed to create obfuscation hook candidates" >&2
+    exit 1
+  }
+  plan=$(mktemp) || {
+    rm -f "$candidates"
+    echo "ERROR: Failed to create obfuscation hook plan" >&2
+    exit 1
+  }
+  trap 'rm -f "$candidates" "$plan"' EXIT
+
+  if ! build_staged_obfuscation_plan "$candidates" "$plan"; then
+    echo "ERROR: Could not classify staged note filenames" >&2
+    exit 1
+  fi
+
+  unobfuscated=()
+  while IFS=$'\t' read -r _kind _id relpath; do
+    [ -n "$relpath" ] && unobfuscated+=("$NOTES_ROOT/$relpath")
+  done < "$plan"
 
   if [ "${#unobfuscated[@]}" -gt 0 ]; then
     if [ "$MODE" = "auto" ]; then
@@ -35,6 +63,21 @@ if [ -f "$NOTES_ROOT/.manifest" ]; then
       # `notes` command happens to appear first on PATH.
       # Pass only the staged unobfuscated files.
       run_notes obfuscate "${unobfuscated[@]}" >&2
+
+      # Auto mode must prove the index no longer contains readable note paths.
+      # A staged file can be absent from the working tree and therefore cannot
+      # be repaired by obfuscation; fail rather than committing that path.
+      if ! build_staged_obfuscation_plan "$candidates" "$plan"; then
+        echo "ERROR: Could not verify staged note filenames" >&2
+        exit 1
+      fi
+      if [ -s "$plan" ]; then
+        echo "ERROR: Auto-obfuscation left staged non-obfuscated filenames:" >&2
+        while IFS=$'\t' read -r _kind _id relpath; do
+          [ -n "$relpath" ] && printf '  %s/%s\n' "$NOTES_ROOT" "$relpath" >&2
+        done < "$plan"
+        exit 1
+      fi
     else
       echo "ERROR: Staged notes have non-obfuscated filenames:" >&2
       printf '  %s\n' "${unobfuscated[@]}" >&2

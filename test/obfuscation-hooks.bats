@@ -67,7 +67,11 @@ setup() {
   [ -x "$NOTES_CALLER_PWD/.git/hooks/pre-commit" ]
   grep -q "Generic hook dispatcher" "$NOTES_CALLER_PWD/.git/hooks/pre-commit"
   [ -x "$NOTES_CALLER_PWD/.git/hooks/pre-commit.d/encryption" ]
-  grep -q "git-crypt status" "$NOTES_CALLER_PWD/.git/hooks/pre-commit.d/encryption"
+  grep -q "git-crypt" "$NOTES_CALLER_PWD/.git/hooks/pre-commit.d/encryption"
+  grep -qF "NOTES_TOOL_ROOT=\"$REPO_DIR\"" \
+    "$NOTES_CALLER_PWD/.git/hooks/pre-commit.d/encryption"
+  grep -qF 'source "$NOTES_TOOL_ROOT/lib/encryption.sh"' \
+    "$NOTES_CALLER_PWD/.git/hooks/pre-commit.d/encryption"
   [ -x "$NOTES_CALLER_PWD/.git/hooks/pre-commit.d/obfuscation" ]
   grep -q "manifest" "$NOTES_CALLER_PWD/.git/hooks/pre-commit.d/obfuscation"
 }
@@ -144,6 +148,71 @@ EOF
   [ "$status" -ne 0 ]
   [[ "$output" == *"non-obfuscated filenames"* ]]
   [[ "$output" == *"sneaky.md"* ]]
+}
+
+
+@test "multi-file obfuscation guard uses one planner without per-file classifiers" {
+  notes setup --yes
+  git -C "$NOTES_CALLER_PWD" add -A
+  git -C "$NOTES_CALLER_PWD" commit --no-verify -q -m "setup"
+
+  printf '%s\n' "# Delta" > "$NOTES_CALLER_PWD/notes/delta.md"
+  printf '%s\n' "# Epsilon" > "$NOTES_CALLER_PWD/notes/epsilon.md"
+  git -C "$NOTES_CALLER_PWD" add notes/delta.md notes/epsilon.md
+
+  local mock_bin="$BATS_TEST_TMPDIR/obfuscation-classifier-bin"
+  local awk_calls="$BATS_TEST_TMPDIR/obfuscation-awk-calls"
+  local real_awk
+  real_awk=$(command -v awk)
+  mkdir -p "$mock_bin"
+
+  for command in basename grep; do
+    cat > "$mock_bin/$command" <<'SH'
+#!/usr/bin/env bash
+printf 'unexpected per-file classifier: %s\n' "${0##*/}" >&2
+exit 97
+SH
+    chmod +x "$mock_bin/$command"
+  done
+
+  cat > "$mock_bin/awk" <<'SH'
+#!/usr/bin/env bash
+printf 'call\n' >> "$AWK_CALLS"
+exec "$REAL_AWK" "$@"
+SH
+  chmod +x "$mock_bin/awk"
+
+  run env \
+    PATH="$mock_bin:$PATH" \
+    AWK_CALLS="$awk_calls" \
+    REAL_AWK="$real_awk" \
+    NOTES_OBFUSCATE_HOOK=guard \
+    bash -c 'cd "$1" && .git/hooks/pre-commit.d/obfuscation' \
+      _ "$NOTES_CALLER_PWD"
+
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"delta.md"* ]]
+  [[ "$output" == *"epsilon.md"* ]]
+  [[ "$output" != *"unexpected per-file classifier"* ]]
+  [ "$(wc -l < "$awk_calls" | tr -d ' ')" -eq 1 ]
+}
+
+
+@test "auto hook fails closed when a staged readable file is missing from disk" {
+  notes setup --yes
+  git -C "$NOTES_CALLER_PWD" add -A
+  git -C "$NOTES_CALLER_PWD" commit --no-verify -q -m "setup"
+
+  printf '%s\n' "# Index Only" > "$NOTES_CALLER_PWD/notes/index-only.md"
+  git -C "$NOTES_CALLER_PWD" add notes/index-only.md
+  rm "$NOTES_CALLER_PWD/notes/index-only.md"
+
+  run bash -c 'cd "$1" && .git/hooks/pre-commit.d/obfuscation' \
+    _ "$NOTES_CALLER_PWD"
+
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"left staged non-obfuscated filenames"* ]]
+  [[ "$output" == *"notes/index-only.md"* ]]
 }
 
 
