@@ -226,6 +226,30 @@ setup() {
   [ -f "$NOTES_CALLER_PWD/notes/sub/deep.md" ]
 }
 
+@test "rename_to_readable derives nested target directories without dirname" {
+  mkdir -p "$NOTES_CALLER_PWD/notes/sub"
+  echo "# Deep" > "$NOTES_CALLER_PWD/notes/sub/deep.md"
+  rename_to_obfuscated "$NOTES_CALLER_PWD/notes" > /dev/null
+
+  local mock_bin blocked_log
+  mock_bin="$BATS_TEST_TMPDIR/dirname-guard-bin"
+  blocked_log="$BATS_TEST_TMPDIR/dirname-blocked"
+  mkdir -p "$mock_bin"
+  cat > "$mock_bin/dirname" <<'BASH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" > "$BLOCKED_COMMAND_LOG"
+exit 97
+BASH
+  chmod +x "$mock_bin/dirname"
+
+  PATH="$mock_bin:$PATH" BLOCKED_COMMAND_LOG="$blocked_log" \
+    run rename_to_readable "$NOTES_CALLER_PWD/notes"
+
+  [ "$status" -eq 0 ]
+  [ -f "$NOTES_CALLER_PWD/notes/sub/deep.md" ]
+  [ ! -e "$blocked_log" ]
+}
+
 @test "rename_to_readable preserves manifest" {
   rename_to_obfuscated "$NOTES_CALLER_PWD/notes" > /dev/null
   local manifest_before

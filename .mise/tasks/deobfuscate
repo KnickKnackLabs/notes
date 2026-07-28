@@ -28,7 +28,13 @@ if [ -n "${usage_files:-}" ]; then
     arg="${arg#"${notes_dir}/"}"
     # Skip empty variadic defaults after xargs unquotes "''".
     [ -z "$arg" ] && continue
-    arg=$(basename "$arg")
+    # Match basename's handling of trailing slashes without spawning it.
+    while [ "${arg%/}" != "$arg" ]; do
+      trimmed="${arg%/}"
+      [ -n "$trimmed" ] || break
+      arg="$trimmed"
+    done
+    [ "$arg" = "/" ] || arg="${arg##*/}"
     ARGS+=("$arg")
   done < <(printf '%s' "${usage_files}" | xargs printf '%s\n')
 fi
