@@ -254,6 +254,23 @@ BASH
 }
 
 
+@test "scoped deobfuscate keeps a slash-only path scoped" {
+  notes obfuscate
+
+  local alpha_id beta_id
+  alpha_id=$(grep 'alpha.md' "$NOTES_CALLER_PWD/notes/.manifest" | cut -f1)
+  beta_id=$(grep 'beta.md' "$NOTES_CALLER_PWD/notes/.manifest" | cut -f1)
+
+  run notes deobfuscate "////"
+
+  [ "$status" -eq 0 ]
+  [ -f "$NOTES_CALLER_PWD/notes/$alpha_id" ]
+  [ -f "$NOTES_CALLER_PWD/notes/$beta_id" ]
+  [ ! -f "$NOTES_CALLER_PWD/notes/alpha.md" ]
+  [ ! -f "$NOTES_CALLER_PWD/notes/beta.md" ]
+}
+
+
 @test "deobfuscate with args warns on unknown ID" {
   notes obfuscate
 
