@@ -276,3 +276,25 @@ generate_test_key() {
   [ "$status" -eq 0 ]
   echo "$output" | grep -q "Already unlocked."
 }
+
+@test "unlock warns when required pre-commit hooks are missing" {
+  notes setup --yes
+  rm -rf "$TARGET_DIR/.git/hooks/pre-commit" \
+    "$TARGET_DIR/.git/hooks/pre-commit.d"
+
+  run notes unlock
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"pre-commit hooks are missing or stale"* ]]
+  [[ "$output" == *"notes install-hooks --yes"* ]]
+}
+
+@test "unlock warns when a required pre-commit hook is stale" {
+  notes setup --yes
+  printf '\n# stale\n' >> "$TARGET_DIR/.git/hooks/pre-commit.d/obfuscation"
+
+  run notes unlock
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"pre-commit hooks are missing or stale"* ]]
+}

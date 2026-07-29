@@ -316,6 +316,36 @@ SH
 }
 
 
+@test "auto hook stages a managed opaque path marked skip-worktree" {
+  notes obfuscate
+  local alpha_id
+  alpha_id=$(awk -F '\t' '$2 == "alpha.md" { print $1 }' \
+    "$NOTES_CALLER_PWD/notes/.manifest")
+  git -C "$NOTES_CALLER_PWD" add -A
+  git -C "$NOTES_CALLER_PWD" commit -q --no-verify -m "obfuscated"
+
+  notes deobfuscate
+  notes install-hooks --yes
+  git -C "$NOTES_CALLER_PWD" update-index \
+    --no-assume-unchanged "notes/$alpha_id"
+  git -C "$NOTES_CALLER_PWD" update-index \
+    --skip-worktree "notes/$alpha_id"
+
+  echo "skip-worktree edit" >> "$NOTES_CALLER_PWD/notes/alpha.md"
+  git -C "$NOTES_CALLER_PWD" add -f notes/alpha.md
+
+  run git -C "$NOTES_CALLER_PWD" commit -m "edit skipped alpha"
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Auto-obfuscating 1 file(s)"* ]]
+  run git -C "$NOTES_CALLER_PWD" show "HEAD:notes/$alpha_id"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"skip-worktree edit"* ]]
+  run git -C "$NOTES_CALLER_PWD" show --name-only --format= HEAD
+  [[ "$output" == *"notes/$alpha_id"* ]]
+  [[ "$output" != *"notes/alpha.md"* ]]
+}
+
 @test "installed hooks run notes from installer, not PATH" {
   notes obfuscate
   git -C "$NOTES_CALLER_PWD" add -A

@@ -197,13 +197,15 @@ _rewrite_exclude_block() {
   mv -f "$tmp" "$exclude_file"
 }
 
-# Apply an index flag to newline-delimited managed paths in one update-index process.
-# Resolve candidates through NUL-delimited Git output so quoted non-ASCII paths
-# stay exact, while missing stale-state paths are omitted from the batch.
+# Apply index flags to newline-delimited managed paths, one update-index process
+# per flag. Resolve candidates through NUL-delimited Git output so quoted
+# non-ASCII paths stay exact, while missing stale-state paths are omitted.
 _update_index_paths() {
-  local repo_root="${1:?usage: _update_index_paths <repo_root> <flag>}"
-  local flag="${2:?usage: _update_index_paths <repo_root> <flag>}"
-  local path
+  local repo_root="${1:?usage: _update_index_paths <repo_root> <flag...>}"
+  shift
+  [ "$#" -gt 0 ] || return 1
+  local flags=("$@")
+  local flag path
   local paths=()
 
   while IFS= read -r path; do
@@ -211,8 +213,12 @@ _update_index_paths() {
   done
   [ ${#paths[@]} -gt 0 ] || return 0
 
-  GIT_LITERAL_PATHSPECS=1 git -C "$repo_root" ls-files -z -- "${paths[@]}" |
-    git -C "$repo_root" update-index "$flag" -z --stdin 2>/dev/null
+  for flag in "${flags[@]}"; do
+    if ! GIT_LITERAL_PATHSPECS=1 git -C "$repo_root" ls-files -z -- "${paths[@]}" |
+      git -C "$repo_root" update-index "$flag" -z --stdin 2>/dev/null; then
+      return 1
+    fi
+  done
 }
 
 # Set assume-unchanged on obfuscated paths + add exclude entries for readable names.
@@ -264,15 +270,18 @@ clear_status_suppression() {
   local repo_root="$RESOLVED_REPO_ROOT"
   local notes_dir="$RESOLVED_NOTES_DIR"
 
-  # Clear assume-unchanged flags in one index update.
+  # Clear both status-suppression flags so managed opaque paths can be staged
+  # even when a sparse checkout or interrupted operation marked them skipped.
   if [ ${#scoped_ids[@]} -gt 0 ] && [ -n "${scoped_ids[0]}" ]; then
     if ! printf '%s\n' "${scoped_ids[@]/#/$notes_dir/}" |
-      _update_index_paths "$repo_root" --no-assume-unchanged; then
+      _update_index_paths "$repo_root" \
+        --no-assume-unchanged --no-skip-worktree; then
       return 1
     fi
   else
     if ! awk -F '\t' -v prefix="$notes_dir/" '$1 != "" { print prefix $1 }' "$manifest" |
-      _update_index_paths "$repo_root" --no-assume-unchanged; then
+      _update_index_paths "$repo_root" \
+        --no-assume-unchanged --no-skip-worktree; then
       return 1
     fi
   fi

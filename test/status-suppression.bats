@@ -97,6 +97,23 @@ load changes_test_helper
   grep -q "notes/beta.md" "$exclude"
 }
 
+@test "clear_status_suppression clears skip-worktree on managed opaque paths" {
+  local alpha_id
+  alpha_id=$(manifest_id_for_name "$MANIFEST" "alpha.md")
+  git -C "$NOTES_CALLER_PWD" update-index \
+    --no-assume-unchanged "notes/$alpha_id"
+  git -C "$NOTES_CALLER_PWD" update-index \
+    --skip-worktree "notes/$alpha_id"
+
+  run git -C "$NOTES_CALLER_PWD" ls-files -v "notes/$alpha_id"
+  [[ "$output" == S* ]]
+
+  clear_status_suppression "$NOTES_CALLER_PWD/notes" "$alpha_id"
+
+  run git -C "$NOTES_CALLER_PWD" ls-files -v "notes/$alpha_id"
+  [[ "$output" != S* ]]
+}
+
 @test "status suppression helpers tolerate empty scope under nounset" {
   run bash -c '
     set -euo pipefail

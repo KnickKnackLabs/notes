@@ -306,7 +306,7 @@ SH
   awk_calls=$(grep -c '^awk$' "$call_log" || true)
   grep_calls=$(grep -c '^grep$' "$call_log" || true)
   basename_calls=$(grep -c '^basename$' "$call_log" || true)
-  add_calls=$(grep -c $'^git\t.* add -- notes/' "$call_log" || true)
+  add_calls=$(grep -c $'^git\t.* add --sparse -- notes/' "$call_log" || true)
   rm_calls=$(grep -c $'^git\t.* rm --cached --quiet --ignore-unmatch -- notes/' "$call_log" || true)
   [ "$status" -eq 0 ]
   [[ "$output" == *"Obfuscated 535 file(s)"* ]]
@@ -342,7 +342,7 @@ SH
 
   [ "$status" -eq 0 ]
   [ "$(grep -c $'^git\t.* cat-file --filters :notes/.manifest$' "$call_log" || true)" -eq 1 ]
-  [ "$(grep -c $'^git\t.* add -- notes/' "$call_log" || true)" -eq 1 ]
+  [ "$(grep -c $'^git\t.* add --sparse -- notes/' "$call_log" || true)" -eq 1 ]
   [ "$(grep -c $'^git\t.* rm --cached --quiet --ignore-unmatch -- notes/' "$call_log" || true)" -eq 1 ]
 }
 

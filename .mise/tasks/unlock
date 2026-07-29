@@ -5,6 +5,7 @@
 set -euo pipefail
 
 source "$MISE_CONFIG_ROOT/lib/common.sh"
+source "$MISE_CONFIG_ROOT/lib/hooks.sh"
 require_git
 require_initialized
 require_rudi
@@ -34,4 +35,9 @@ if [ -f "$TARGET_DIR/notes/.manifest" ]; then
   else
     cd "$MISE_CONFIG_ROOT" && NOTES_CALLER_PWD="$TARGET_DIR" mise run -q deobfuscate
   fi
+fi
+
+if ! required_pre_commit_hooks_ready notes; then
+  echo "Warning: required Notes pre-commit hooks are missing or stale." >&2
+  echo "Run 'notes install-hooks --yes' before staging readable notes." >&2
 fi

@@ -117,7 +117,7 @@ while IFS=$'\t' read -r relpath id; do
   new_count=$((new_count + 1))
 done < "$renamed"
 
-git -C "$TARGET_DIR" add -- "${obfuscated_paths[@]}"
+git -C "$TARGET_DIR" add --sparse -- "${obfuscated_paths[@]}"
 git -C "$TARGET_DIR" rm --cached --quiet --ignore-unmatch -- \
   "${readable_paths[@]}"
 
