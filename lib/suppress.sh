@@ -232,6 +232,7 @@ set_status_suppression() {
   local scoped_ids=("$@")
   local manifest="$abs_notes_dir/.manifest"
   [ ! -f "$manifest" ] && return
+  require_readable_notes_state "$abs_notes_dir" || return
 
   resolve_notes_dir "$abs_notes_dir" || return
   local repo_root="$RESOLVED_REPO_ROOT"
@@ -265,6 +266,7 @@ clear_status_suppression() {
   local scoped_ids=("$@")
   local manifest="$abs_notes_dir/.manifest"
   [ ! -f "$manifest" ] && return
+  require_readable_notes_state "$abs_notes_dir" || return
 
   resolve_notes_dir "$abs_notes_dir" || return
   local repo_root="$RESOLVED_REPO_ROOT"
@@ -346,6 +348,7 @@ detect_stale_readable_notes() {
   local abs_notes_dir="${1:?usage: detect_stale_readable_notes <abs_notes_dir>}"
   local manifest="$abs_notes_dir/.manifest"
   [ -f "$manifest" ] || return 0
+  require_readable_notes_state "$abs_notes_dir" || return
 
   resolve_notes_dir "$abs_notes_dir" || return
   local repo_root="$RESOLVED_REPO_ROOT"
@@ -495,6 +498,7 @@ rebuild_status_suppression() {
   local abs_notes_dir="${1:?usage: rebuild_status_suppression <abs_notes_dir>}"
   local manifest="$abs_notes_dir/.manifest"
   [ -f "$manifest" ] || return 0
+  require_readable_notes_state "$abs_notes_dir" || return
 
   resolve_notes_dir "$abs_notes_dir" || return
   local repo_root="$RESOLVED_REPO_ROOT"

@@ -16,12 +16,16 @@ abs_notes_dir="$(cd "$TARGET_DIR/$notes_dir" 2>/dev/null && pwd)" || {
   exit 1
 }
 manifest="$abs_notes_dir/.manifest"
+readable_state=$(notes_readable_state "$abs_notes_dir")
+if [ "$readable_state" = "locked" ]; then
+  echo "Notes are locked; skipping readable manifest checks and reconciliation."
+fi
 
 # --- Check for assume-unchanged manifest ---
 # git pull can fail when notes/.manifest is assume-unchanged but differs
 # between local HEAD and upstream. Detect this early and repair.
 
-if [ -f "$manifest" ]; then
+if [ "$readable_state" = "readable" ] && [ -f "$manifest" ]; then
   manifest_rc=0
   NOTES_QUIET_MANIFEST_CHECK=1 detect_assume_unchanged_manifest "$notes_dir" || manifest_rc=$?
 
@@ -48,8 +52,9 @@ fi
 # --- Determine obfuscation state ---
 # We need to know if we're deobfuscated so we can re-apply suppression after pull.
 
-obf_status="unknown"
-if [ -f "$manifest" ]; then
+obf_status="$readable_state"
+if [ "$readable_state" = "readable" ] && [ -f "$manifest" ]; then
+  obf_status="unknown"
   first_name=$(head -1 "$manifest" | cut -f2)
   first_hash=$(head -1 "$manifest" | cut -f1)
   if [ -n "$first_name" ] && [ -f "$abs_notes_dir/$first_name" ]; then

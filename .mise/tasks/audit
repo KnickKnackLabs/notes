@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -24,6 +25,13 @@ def main() -> int:
     if not notes_dir.is_dir():
         print(f"Error: notes directory not found: {notes_dir}", file=sys.stderr)
         return 1
+
+    readable = subprocess.run(
+        [str(repo_dir / "lib" / "readable-state.sh"), "require", str(notes_dir)],
+        check=False,
+    )
+    if readable.returncode != 0:
+        return readable.returncode
 
     try:
         top_n = parse_top(os.environ.get("usage_top", "10"))

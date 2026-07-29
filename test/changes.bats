@@ -42,31 +42,14 @@ SH
   chmod +x "$FAILING_CMP_BIN/cmp"
 }
 
-setup_rudi_status_overlay() {
-  RUDI_STATUS_BIN="$BATS_TEST_TMPDIR/rudi-status-bin"
-  mkdir -p "$RUDI_STATUS_BIN"
-  cat > "$RUDI_STATUS_BIN/rudi" <<'SH'
-#!/usr/bin/env bash
-if [ "$#" -eq 2 ] && [ "$1" = "status" ] && [ "$2" = "--json" ]; then
-  printf '%s\n' "${RUDI_STATUS_JSON:?}"
-  exit 0
-fi
-echo "unexpected rudi invocation: $*" >&2
-exit 73
-SH
-  chmod +x "$RUDI_STATUS_BIN/rudi"
-}
-
 # ── detect_changes ────────────────────────────────────────────
 
 @test "notes changes refuses locked encrypted content before classifying paths" {
-  setup_rudi_status_overlay
   printf 'notes/** filter=git-crypt diff=git-crypt\n' > "$NOTES_CALLER_PWD/.gitattributes"
   printf '\0GITCRYPT\0encrypted manifest bytes\n' > "$MANIFEST"
   printf '\0GITCRYPT\0encrypted note bytes\n' > "$NOTES_CALLER_PWD/notes/aaaaaaaa"
 
-  RUDI_STATUS_JSON='{"initialized":true,"unlocked":false}' \
-    PATH="$RUDI_STATUS_BIN:$PATH" run notes changes --summary
+  run notes changes --summary
   [ "$status" -ne 0 ]
   [[ "$output" == *"git-crypt is locked"* ]]
   [[ "$output" == *"notes unlock"* ]]
@@ -74,19 +57,16 @@ SH
 
   # A keyless clone can report initialized=false even though the encrypted
   # manifest is present and unreadable.
-  RUDI_STATUS_JSON='{"initialized":false,"unlocked":false}' \
-    PATH="$RUDI_STATUS_BIN:$PATH" run notes changes
+  run notes changes
   [ "$status" -ne 0 ]
   [[ "$output" == *"git-crypt is locked"* ]]
   [[ "$output" != *"aaaaaaaa"* ]]
 }
 
 @test "notes changes preserves clean output when encryption is unlocked" {
-  setup_rudi_status_overlay
   printf 'notes/** filter=git-crypt diff=git-crypt\n' > "$NOTES_CALLER_PWD/.gitattributes"
 
-  RUDI_STATUS_JSON='{"initialized":true,"unlocked":true}' \
-    PATH="$RUDI_STATUS_BIN:$PATH" run notes changes --summary
+  run notes changes --summary
 
   [ "$status" -eq 0 ]
   [ "$output" = "No changes." ]
