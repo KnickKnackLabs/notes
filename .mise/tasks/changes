@@ -20,6 +20,22 @@ if [ ! -f "$manifest" ]; then
   exit 1
 fi
 
+# A locked manifest is encrypted binary data. Do not interpret it as a readable
+# ID-to-path map or report its opaque files as new notes. Check the exact path:
+# rudi can report initialized=false for a locked clone that has attributes but
+# does not carry a local key.
+manifest_attr=$(git -C "$TARGET_DIR" check-attr filter -- "$notes_dir/.manifest")
+manifest_filter="${manifest_attr##*: }"
+if [ "$manifest_filter" = "git-crypt" ]; then
+  require_rudi
+  rudi_json=$(cd "$TARGET_DIR" && rudi status --json)
+  enc_unlocked=$(printf '%s\n' "$rudi_json" | jq -r '.unlocked')
+  if [ "$enc_unlocked" != "true" ]; then
+    echo "Error: git-crypt is locked. Run 'notes unlock' first." >&2
+    exit 1
+  fi
+fi
+
 # Parse variadic args
 ARGS=()
 if [ -n "${usage_files:-}" ]; then
