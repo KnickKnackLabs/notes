@@ -108,7 +108,7 @@ const readme = (
 shiv = "https://github.com/KnickKnackLabs/vfox-shiv"
 
 [tools]
-"shiv:notes" = "0.8"`}</CodeBlock>
+"shiv:notes" = "0.9"`}</CodeBlock>
       <CodeBlock lang="bash">{`mise install`}</CodeBlock>
     </Section>
 
