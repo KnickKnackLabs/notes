@@ -29,7 +29,7 @@ Or declare it for a project:
 shiv = "https://github.com/KnickKnackLabs/vfox-shiv"
 
 [tools]
-"shiv:notes" = "0.8"
+"shiv:notes" = "0.9"
 ```
 
 ```bash
