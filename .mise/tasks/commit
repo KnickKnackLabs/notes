@@ -24,6 +24,7 @@ if [ ! -f "$manifest" ]; then
   echo "No manifest found. Run 'notes obfuscate' first." >&2
   exit 1
 fi
+require_readable_notes_state "$abs_notes_dir"
 
 ARGS=()
 if [ -n "${usage_files:-}" ]; then

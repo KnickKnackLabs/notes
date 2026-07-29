@@ -14,7 +14,8 @@ if [ "${usage_dry_run:-false}" != "true" ]; then
   exit 1
 fi
 
-args=(conflicts --dir "${usage_dir:-notes}")
+notes_dir="${usage_dir:-notes}"
+args=(conflicts --dir "$notes_dir")
 if [ -n "${usage_out:-}" ]; then
   args+=(--out "${usage_out}")
 fi

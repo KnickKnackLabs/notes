@@ -15,6 +15,7 @@ TARGET_DIR="${NOTES_CALLER_PWD:-.}"
 NOTES_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NOTES_REPO_DIR="$(cd "$NOTES_LIB_DIR/.." && pwd)"
 HOOKS_DIR="$NOTES_REPO_DIR/hooks"
+source "$NOTES_LIB_DIR/readable-state.sh"
 
 # ── Require checks ────────────────────────────────────────────
 

@@ -44,6 +44,34 @@ SH
 
 # ── detect_changes ────────────────────────────────────────────
 
+@test "notes changes refuses locked encrypted content before classifying paths" {
+  printf 'notes/** filter=git-crypt diff=git-crypt\n' > "$NOTES_CALLER_PWD/.gitattributes"
+  printf '\0GITCRYPT\0encrypted manifest bytes\n' > "$MANIFEST"
+  printf '\0GITCRYPT\0encrypted note bytes\n' > "$NOTES_CALLER_PWD/notes/aaaaaaaa"
+
+  run notes changes --summary
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"git-crypt is locked"* ]]
+  [[ "$output" == *"notes unlock"* ]]
+  [[ "$output" != *"aaaaaaaa"* ]]
+
+  # A keyless clone can report initialized=false even though the encrypted
+  # manifest is present and unreadable.
+  run notes changes
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"git-crypt is locked"* ]]
+  [[ "$output" != *"aaaaaaaa"* ]]
+}
+
+@test "notes changes preserves clean output when encryption is unlocked" {
+  printf 'notes/** filter=git-crypt diff=git-crypt\n' > "$NOTES_CALLER_PWD/.gitattributes"
+
+  run notes changes --summary
+
+  [ "$status" -eq 0 ]
+  [ "$output" = "No changes." ]
+}
+
 @test "detect_changes: no changes when files match HEAD" {
   run detect_changes "$NOTES_CALLER_PWD/notes"
   [ "$status" -eq 0 ]
