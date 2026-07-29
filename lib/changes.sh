@@ -243,6 +243,7 @@ detect_changes() {
   resolve_notes_dir "$abs_notes_dir" || return
   local repo_root="$RESOLVED_REPO_ROOT"
   local notes_dir="$RESOLVED_NOTES_DIR"
+  require_readable_notes_state "$abs_notes_dir" || return
   local workspace rc=0
   workspace=$(mktemp -d) || return
   : > "$workspace/detected"

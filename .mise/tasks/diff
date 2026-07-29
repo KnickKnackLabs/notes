@@ -16,6 +16,7 @@ pr_number="${usage_pr:-}"
 out_arg="${usage_out:-}"
 abs_notes_dir="$TARGET_DIR/$notes_dir"
 repo_root=$(git -C "$TARGET_DIR" rev-parse --show-toplevel)
+require_readable_notes_state "$abs_notes_dir"
 
 ARGS=()
 if [ -n "${usage_refs:-}" ]; then

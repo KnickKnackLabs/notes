@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -45,6 +46,13 @@ def existing_path_candidates(selector: str) -> list[Path]:
 
 
 def main() -> int:
+    readable = subprocess.run(
+        [str(repo_dir / "lib" / "readable-state.sh"), "require", str(notes_dir)],
+        check=False,
+    )
+    if readable.returncode != 0:
+        return readable.returncode
+
     note_path = None
     for candidate in existing_path_candidates(selector):
         if candidate.is_file():

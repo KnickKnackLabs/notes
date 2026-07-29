@@ -104,6 +104,7 @@ build_obfuscation_plan() {
   local manifest="$notes_dir/.manifest"
   local workspace candidates manifest_input rc=0
 
+  require_readable_notes_state "$notes_dir" || return
   workspace=$(mktemp -d) || {
     echo "Error: failed to create obfuscation workspace" >&2
     return 1
@@ -158,6 +159,7 @@ apply_obfuscation_plan() {
   local manifest="$notes_dir/.manifest"
   local new_entries kind id relpath new_count=0
 
+  require_readable_notes_state "$notes_dir" || return
   [ -s "$plan_file" ] || return 2
 
   new_entries=$(mktemp) || {
@@ -511,6 +513,7 @@ rename_to_readable() {
   local manifest="$notes_dir/.manifest"
   local count=0 dirty_count=0
 
+  require_readable_notes_state "$notes_dir" || return
   [ ! -f "$manifest" ] && return 1
 
   # _rename_one_to_readable returns: 0=renamed, 2=skipped,
