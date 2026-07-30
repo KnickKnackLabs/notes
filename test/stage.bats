@@ -29,6 +29,51 @@ setup() {
   [[ "$output" == *"alpha.md"* ]]
 }
 
+@test "notes stage fails when a tracked readable path produces no index change" {
+  echo "# Legacy plaintext" > "$NOTES_CALLER_PWD/notes/legacy.md"
+  git -C "$NOTES_CALLER_PWD" add -f notes/legacy.md
+  git -C "$NOTES_CALLER_PWD" commit -q --no-verify -m "legacy plaintext note"
+
+  run notes stage legacy.md
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"staging produced no index change"* ]]
+  [[ "$output" == *"legacy.md"* ]]
+}
+
+@test "notes stage restores a changed tracked blob that remains plaintext" {
+  echo "# Legacy plaintext" > "$NOTES_CALLER_PWD/notes/legacy.md"
+  git -C "$NOTES_CALLER_PWD" add -f notes/legacy.md
+  git -C "$NOTES_CALLER_PWD" commit -q --no-verify -m "legacy plaintext note"
+
+  local original_blob
+  original_blob=$(git -C "$NOTES_CALLER_PWD" rev-parse :notes/legacy.md)
+  local clean_filter="$BATS_TEST_TMPDIR/plaintext-clean-filter"
+  cat > "$clean_filter" <<'SH'
+#!/usr/bin/env bash
+printf 'FILTERED: '
+cat
+SH
+  chmod +x "$clean_filter"
+  git -C "$NOTES_CALLER_PWD" config filter.plaintext-clean.clean "$clean_filter"
+  git -C "$NOTES_CALLER_PWD" config filter.plaintext-clean.smudge cat
+  git -C "$NOTES_CALLER_PWD" config filter.plaintext-clean.required true
+  printf 'notes/legacy.md filter=plaintext-clean\n' > "$NOTES_CALLER_PWD/.gitattributes"
+  printf '# Changed legacy plaintext\n' > "$NOTES_CALLER_PWD/notes/legacy.md"
+
+  run notes stage legacy.md
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"not git-crypt encrypted"* ]]
+  [[ "$output" == *"legacy.md"* ]]
+  run git -C "$NOTES_CALLER_PWD" rev-parse :notes/legacy.md
+  [ "$output" = "$original_blob" ]
+  run git -C "$NOTES_CALLER_PWD" diff --cached --name-only -- notes/legacy.md
+  [ -z "$output" ]
+  run git -C "$NOTES_CALLER_PWD" show :notes/legacy.md
+  [ "$output" = "# Legacy plaintext" ]
+}
+
 @test "notes stage: no args requires explicit scope" {
   echo "# Alpha modified" > "$NOTES_CALLER_PWD/notes/alpha.md"
   echo "# Gamma" > "$NOTES_CALLER_PWD/notes/gamma.md"

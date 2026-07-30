@@ -11,6 +11,8 @@ source "$MISE_CONFIG_ROOT/lib/obfuscate.sh"
 source "$MISE_CONFIG_ROOT/lib/suppress.sh"
 source "$MISE_CONFIG_ROOT/lib/changes.sh"
 source "$MISE_CONFIG_ROOT/lib/hooks.sh"
+source "$MISE_CONFIG_ROOT/lib/encryption.sh"
+source "$MISE_CONFIG_ROOT/lib/stage.sh"
 require_git
 
 notes_dir="${usage_dir:-notes}"
@@ -228,34 +230,9 @@ for relpath in ${to_stage[@]+"${to_stage[@]}"}; do
   local_file="$abs_notes_dir/$relpath"
 
   if [ -f "$local_file" ]; then
-    # Modified or new: force-add the readable file.
-    git -C "$TARGET_DIR" add -f "$notes_dir/$relpath"
-    echo "  staged: $relpath"
+    stage_readable_note "$TARGET_DIR" "$notes_dir" "$relpath"
   else
-    # Deleted: remove the obfuscated ID from the index.
-    id=$(manifest_id_for_name "$manifest" "$relpath")
-    if [ -n "$id" ]; then
-      # First remove the tracked blob when it is still present in the index.
-      # If the index cannot be updated (for example, an index lock exists),
-      # fail before mutating the working manifest. If a previous interrupted
-      # run already staged/removed the blob, keep going and only stage the
-      # manifest repair.
-      if git -C "$TARGET_DIR" ls-files --error-unmatch -- "$notes_dir/$id" >/dev/null 2>&1; then
-        git -C "$TARGET_DIR" rm --cached --quiet "$notes_dir/$id"
-      fi
-
-      tmp_manifest=$(mktemp) || exit 1
-      manifest_backup=$(mktemp) || exit 1
-      cp "$manifest" "$manifest_backup"
-      awk -F '\t' -v path="$relpath" '$2 != path { print $0 }' "$manifest" > "$tmp_manifest"
-      mv -f "$tmp_manifest" "$manifest"
-      if ! git -C "$TARGET_DIR" add -f "$notes_dir/.manifest"; then
-        mv -f "$manifest_backup" "$manifest"
-        exit 1
-      fi
-      rm -f "$manifest_backup"
-      echo "  staged (delete): $relpath"
-    fi
+    stage_deleted_note "$TARGET_DIR" "$notes_dir" "$manifest" "$relpath"
   fi
   staged=$((staged + 1))
 done
