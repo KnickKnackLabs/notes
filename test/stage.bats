@@ -41,11 +41,13 @@ setup() {
   [[ "$output" == *"legacy.md"* ]]
 }
 
-@test "notes stage rejects a changed tracked blob that remains plaintext" {
+@test "notes stage restores a changed tracked blob that remains plaintext" {
   echo "# Legacy plaintext" > "$NOTES_CALLER_PWD/notes/legacy.md"
   git -C "$NOTES_CALLER_PWD" add -f notes/legacy.md
   git -C "$NOTES_CALLER_PWD" commit -q --no-verify -m "legacy plaintext note"
 
+  local original_blob
+  original_blob=$(git -C "$NOTES_CALLER_PWD" rev-parse :notes/legacy.md)
   local clean_filter="$BATS_TEST_TMPDIR/plaintext-clean-filter"
   cat > "$clean_filter" <<'SH'
 #!/usr/bin/env bash
@@ -64,9 +66,12 @@ SH
   [ "$status" -ne 0 ]
   [[ "$output" == *"not git-crypt encrypted"* ]]
   [[ "$output" == *"legacy.md"* ]]
+  run git -C "$NOTES_CALLER_PWD" rev-parse :notes/legacy.md
+  [ "$output" = "$original_blob" ]
+  run git -C "$NOTES_CALLER_PWD" diff --cached --name-only -- notes/legacy.md
+  [ -z "$output" ]
   run git -C "$NOTES_CALLER_PWD" show :notes/legacy.md
-  [[ "$output" == FILTERED:* ]]
-  [[ "$output" != *"GITCRYPT"* ]]
+  [ "$output" = "# Legacy plaintext" ]
 }
 
 @test "notes stage: no args requires explicit scope" {
