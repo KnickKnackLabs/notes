@@ -65,14 +65,17 @@ if ! write_tracked_readable_notes \
   exit 1
 fi
 tracked_readable_count=$(tracked_readable_note_count "$tracked_readable_snapshot")
-rm -f "$tracked_readable_snapshot"
 
 repo_was_initialized=false
 is_initialized && repo_was_initialized=true
 unlock_requested=${usage_unlock:-false}
-require_tracked_plaintext_setup_ready \
-  "$TARGET_DIR" "$tracked_readable_count" \
-  "$repo_was_initialized" "$unlock_requested"
+if ! require_tracked_plaintext_setup_ready \
+    "$TARGET_DIR" "$tracked_readable_snapshot" "$tracked_readable_count" \
+    "$repo_was_initialized" "$unlock_requested"; then
+  rm -f "$tracked_readable_snapshot"
+  exit 1
+fi
+rm -f "$tracked_readable_snapshot"
 
 setup_confirmation_message="notes setup will initialize/update git-crypt, .gitattributes, $NOTES_DIR/.manifest, and git hooks for $NOTES_DIR/ in this repo."
 if [ "$tracked_readable_count" -gt 0 ]; then

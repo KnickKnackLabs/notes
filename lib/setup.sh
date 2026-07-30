@@ -59,13 +59,24 @@ tracked_readable_note_count() {
   printf '%s\n' "$count"
 }
 
-# A tracked-plaintext migration must begin clean, and an existing locked repo
-# must unlock before setup changes .gitattributes.
+# A tracked-plaintext migration must begin with every candidate available as a
+# regular worktree file. Sparse or otherwise absent candidates cannot be staged
+# and would leave plaintext blobs behind the new encryption attributes.
+# Existing locked repositories must also unlock before setup changes attributes.
 require_tracked_plaintext_setup_ready() {
-  local repo="$1" tracked_count="$2" initialized="$3" unlock_requested="$4"
-  local status_snapshot
+  local repo="$1" tracked_snapshot="$2" tracked_count="$3"
+  local initialized="$4" unlock_requested="$5"
+  local tracked_path status_snapshot
 
   [ "$tracked_count" -gt 0 ] || return 0
+
+  while IFS= read -r -d '' tracked_path; do
+    if [ ! -f "$repo/$tracked_path" ] || [ -L "$repo/$tracked_path" ]; then
+      echo "Error: tracked plaintext note is not available as a regular worktree file: $tracked_path" >&2
+      echo "Materialize all tracked plaintext notes (for example, expand or disable sparse checkout), then rerun notes setup." >&2
+      return 1
+    fi
+  done < "$tracked_snapshot"
 
   status_snapshot=$(mktemp) || return 1
   if ! git -C "$repo" status --porcelain > "$status_snapshot"; then

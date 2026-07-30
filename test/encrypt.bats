@@ -159,6 +159,24 @@ SH
   [ ! -f "$TARGET_DIR/notes/.manifest" ]
 }
 
+@test "setup refuses sparse tracked plaintext onboarding before mutation" {
+  commit_tracked_plaintext_notes
+  git -C "$TARGET_DIR" sparse-checkout init --no-cone
+  git -C "$TARGET_DIR" sparse-checkout set --no-cone \
+    '/*' '!/*/' '/notes/alpha.md'
+  [ -f "$TARGET_DIR/notes/alpha.md" ]
+  [ ! -e "$TARGET_DIR/notes/beta.md" ]
+
+  run notes setup --yes
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"not available as a regular worktree file"* ]]
+  [[ "$output" == *"expand or disable sparse checkout"* ]]
+  [ ! -d "$TARGET_DIR/.git/git-crypt" ]
+  [ ! -f "$TARGET_DIR/.gitattributes" ]
+  [ ! -f "$TARGET_DIR/notes/.manifest" ]
+}
+
 @test "setup --unlock unlocks existing repo before setup mutation" {
   commit_tracked_plaintext_notes
   mkdir -p "$TARGET_DIR/.git/git-crypt"
