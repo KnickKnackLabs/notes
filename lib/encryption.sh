@@ -1,5 +1,29 @@
 #!/usr/bin/env bash
-# encryption.sh — staged encrypted-path validation
+# encryption.sh — Git blob and staged encrypted-path validation
+
+GITCRYPT_HEADER_HEX="00474954435259505400"
+
+# Print encrypted or plaintext for a raw Git blob. Backend failures preserve
+# their exit status. The producer is fully drained so large blobs do not cause
+# SIGPIPE under pipefail.
+# Usage: git_blob_encryption_state <repo> <object>
+git_blob_encryption_state() {
+  local repo="$1" object="$2" header_hex blob_status=0
+
+  header_hex=$(
+    git -C "$repo" cat-file blob "$object" 2>/dev/null |
+      { dd bs=1 count=10 2>/dev/null; cat >/dev/null; } |
+      od -An -tx1 |
+      tr -d ' \n'
+  ) || blob_status=$?
+  [ "$blob_status" -eq 0 ] || return "$blob_status"
+
+  if [ "$header_hex" = "$GITCRYPT_HEADER_HEX" ]; then
+    printf 'encrypted\n'
+  else
+    printf 'plaintext\n'
+  fi
+}
 
 # Verify that indexed blobs for encrypted paths are encrypted.
 # The common path checks all paths in one git-crypt call. If that call reports

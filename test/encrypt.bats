@@ -2,6 +2,43 @@
 
 load test_helper
 
+commit_tracked_plaintext_notes() {
+  mkdir -p "$TARGET_DIR/notes"
+  printf '# Existing alpha\n' > "$TARGET_DIR/notes/alpha.md"
+  printf '# Existing beta\n' > "$TARGET_DIR/notes/beta.md"
+  git -C "$TARGET_DIR" add notes
+  git -C "$TARGET_DIR" commit -q -m "add plaintext notes"
+}
+
+setup_locked_rudi_overlay() {
+  LOCKED_RUDI_BIN="$BATS_TEST_TMPDIR/locked-rudi-bin"
+  mkdir -p "$LOCKED_RUDI_BIN"
+  cat > "$LOCKED_RUDI_BIN/rudi" <<'SH'
+#!/usr/bin/env bash
+case "${1:-}" in
+  status)
+    printf '{"unlocked":false}\n'
+    ;;
+  unlock)
+    if [ -n "$(git -C "${RUDI_CALLER_PWD:?}" status --porcelain)" ]; then
+      echo "unlock saw dirty worktree" >&2
+      exit 73
+    fi
+    touch "$RUDI_CALLER_PWD/.unlock-ran-clean"
+    ;;
+  assign)
+    printf '%-40s filter=git-crypt diff=git-crypt\n' "$2" \
+      >> "$RUDI_CALLER_PWD/.gitattributes"
+    ;;
+  *)
+    echo "unexpected rudi command: $*" >&2
+    exit 99
+    ;;
+esac
+SH
+  chmod +x "$LOCKED_RUDI_BIN/rudi"
+}
+
 setup_failing_encrypted_note_enumeration_overlay() {
   FAILING_FIND_BIN="$BATS_TEST_TMPDIR/failing-encrypted-note-find"
   local real_find
@@ -63,6 +100,22 @@ SH
   [[ "$output" == *"Requested encrypted patterns already configured"* ]]
 }
 
+@test "setup rerun does not classify locked managed blobs as plaintext" {
+  mkdir -p "$TARGET_DIR/.git/git-crypt" "$TARGET_DIR/notes"
+  printf '\0GITCRYPT\0aaa00001\talpha.md\n' > "$TARGET_DIR/notes/.manifest"
+  printf '\0GITCRYPT\0encrypted alpha\n' > "$TARGET_DIR/notes/aaa00001"
+  git -C "$TARGET_DIR" add notes
+  printf 'notes/** filter=git-crypt diff=git-crypt\n' > "$TARGET_DIR/.gitattributes"
+  git -C "$TARGET_DIR" add .gitattributes
+  git -C "$TARGET_DIR" commit -q -m "add locked managed notes"
+
+  run notes setup --yes
+
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"tracked plaintext note(s)"* ]]
+  [[ "$output" == *"This repo already has encrypted notes."* ]]
+}
+
 @test "setup adds notes pattern when other git-crypt patterns already exist" {
   git -C "$TARGET_DIR" crypt init
   echo ".modules/manifest filter=git-crypt diff=git-crypt" > "$TARGET_DIR/.gitattributes"
@@ -91,6 +144,31 @@ SH
 
   grep -Eq "^agents/\*/Zettels/\*\*[[:space:]]+filter=git-crypt" "$TARGET_DIR/.gitattributes"
   grep -Eq "^notes/private/\*\*[[:space:]]+filter=git-crypt" "$TARGET_DIR/.gitattributes"
+}
+
+@test "setup refuses dirty tracked plaintext onboarding before mutation" {
+  commit_tracked_plaintext_notes
+  printf '# Local edit\n' >> "$TARGET_DIR/notes/alpha.md"
+
+  run notes setup --yes
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"requires a clean worktree"* ]]
+  [ ! -d "$TARGET_DIR/.git/git-crypt" ]
+  [ ! -f "$TARGET_DIR/.gitattributes" ]
+  [ ! -f "$TARGET_DIR/notes/.manifest" ]
+}
+
+@test "setup --unlock unlocks existing repo before setup mutation" {
+  commit_tracked_plaintext_notes
+  mkdir -p "$TARGET_DIR/.git/git-crypt"
+  setup_locked_rudi_overlay
+
+  PATH="$LOCKED_RUDI_BIN:$PATH" run notes setup --yes --unlock
+
+  [ "$status" -eq 0 ]
+  [ -f "$TARGET_DIR/.unlock-ran-clean" ]
+  grep -Eq "^notes/\*\*[[:space:]]+filter=git-crypt" "$TARGET_DIR/.gitattributes"
 }
 
 @test "setup with custom dir writes manifest and default encrypted pattern there" {
@@ -214,6 +292,69 @@ generate_test_key() {
 
   [ -f "$TARGET_DIR/notes/.manifest" ]
   grep -q "existing.md" "$TARGET_DIR/notes/.manifest"
+}
+
+@test "setup and stage forward-encrypt tracked plaintext notes" {
+  commit_tracked_plaintext_notes
+
+  run notes setup --yes
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Preparing 2 tracked plaintext note(s)"* ]]
+  [[ "$output" == *"notes stage --all"* ]]
+
+  git -C "$TARGET_DIR" add .gitattributes
+  run notes stage --all
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"staged: alpha.md"* ]]
+  [[ "$output" == *"staged: beta.md"* ]]
+
+  git -C "$TARGET_DIR" show :notes/alpha.md > "$BATS_TEST_TMPDIR/staged-alpha"
+  grep -a -q "GITCRYPT" "$BATS_TEST_TMPDIR/staged-alpha"
+
+  git -C "$TARGET_DIR" commit -q -m "onboard encrypted notes"
+
+  local alpha_id
+  alpha_id=$(manifest_id_for_name "$TARGET_DIR/notes/.manifest" "alpha.md")
+  [ -n "$alpha_id" ]
+  ! git -C "$TARGET_DIR" ls-files --error-unmatch notes/alpha.md >/dev/null 2>&1
+  git -C "$TARGET_DIR" ls-files --error-unmatch "notes/$alpha_id" >/dev/null
+
+  run notes verify-blobs --ref HEAD --strict
+  [ "$status" -eq 0 ]
+  run git -C "$TARGET_DIR" show HEAD~1:notes/alpha.md
+  [ "$output" = "# Existing alpha" ]
+}
+
+@test "setup onboards plaintext notes beside existing encrypted infrastructure" {
+  local fpr="1111111111111111111111111111111111111111"
+
+  run notes setup --yes --pattern ".modules/manifest"
+  [ "$status" -eq 0 ]
+  rm -f "$TARGET_DIR/notes/.manifest"
+  mkdir -p "$TARGET_DIR/.git-crypt/keys/default/0"
+  printf 'existing resident key record\n' \
+    > "$TARGET_DIR/.git-crypt/keys/default/0/$fpr.gpg"
+
+  mkdir -p "$TARGET_DIR/.modules" "$TARGET_DIR/notes"
+  printf 'fold = main\n' > "$TARGET_DIR/.modules/manifest"
+  printf '# Existing home note\n' > "$TARGET_DIR/notes/home.md"
+  git -C "$TARGET_DIR" add .gitattributes .git-crypt .modules/manifest notes/home.md
+  git -C "$TARGET_DIR" commit -q --no-verify -m "add existing home state"
+
+  run notes setup --yes
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Preparing 1 tracked plaintext note(s)"* ]]
+
+  git -C "$TARGET_DIR" add .gitattributes
+  run notes stage --all
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"staged: home.md"* ]]
+  git -C "$TARGET_DIR" commit -q -m "onboard home notes"
+
+  run notes verify-blobs --ref HEAD --strict
+  [ "$status" -eq 0 ]
+  run git -C "$TARGET_DIR" show HEAD~1:notes/home.md
+  [ "$output" = "# Existing home note" ]
 }
 
 # --- setup next-steps ---
