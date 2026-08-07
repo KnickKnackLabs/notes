@@ -40,7 +40,14 @@ error_paths=()
 # ── Helper: check if a blob at <ref>:<path> has git-crypt magic bytes ──
 _check_encrypted() {
   local r="$1" p="$2" header_hex
-  if ! header_hex=$(git show "$r:$p" 2>/dev/null | dd bs=1 count=10 2>/dev/null | od -An -tx1 | tr -d ' \n'); then
+  # Drain the blob after capturing its header so large objects do not send the
+  # git producer SIGPIPE under this task's pipefail setting.
+  if ! header_hex=$(
+    git cat-file blob "$r:$p" 2>/dev/null |
+      { dd bs=1 count=10 2>/dev/null; cat >/dev/null; } |
+      od -An -tx1 |
+      tr -d ' \n'
+  ); then
     return 1
   fi
   [ "$header_hex" = "$gitcrypt_header_hex" ]
@@ -62,6 +69,15 @@ else
 fi
 
 # ── 2. Walk all tracked blobs under notes dir ──────────────────
+tracked_blob_snapshot=$(mktemp) || { echo "Error: failed to create tracked blob snapshot" >&2; exit 1; }
+tracked_blob_status=0
+git ls-tree -r -z --name-only "$ref" -- "$notes_dir/" > "$tracked_blob_snapshot" || tracked_blob_status=$?
+if [ "$tracked_blob_status" -ne 0 ]; then
+  rm -f "$tracked_blob_snapshot"
+  echo "Error: failed to enumerate note blobs in ref '$ref'." >&2
+  exit "$tracked_blob_status"
+fi
+
 while IFS= read -r -d '' path; do
   [ -z "$path" ] && continue
   [[ "$path" == "$manifest_path" ]] && continue
@@ -79,7 +95,8 @@ while IFS= read -r -d '' path; do
     errors=$((errors + 1))
     error_paths+=("$path")
   fi
-done < <(git ls-tree -r -z --name-only "$ref" -- "$notes_dir/" 2>/dev/null)
+done < "$tracked_blob_snapshot"
+rm -f "$tracked_blob_snapshot"
 
 # ── 3. Strict mode: check working tree cleanliness ────────────
 if [ "$strict" = "true" ]; then

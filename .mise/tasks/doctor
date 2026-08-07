@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+#MISE description="Check local development setup"
+#USAGE example "mise run doctor" header="Check convention lints and local hook state"
+set -euo pipefail
+
+repo_dir="${MISE_CONFIG_ROOT:?MISE_CONFIG_ROOT not set}"
+codebase_command="${CODEBASE_COMMAND:-codebase}"
+readme_command="${README_COMMAND:-readme}"
+gum_command="${GUM_COMMAND:-gum}"
+separator='|'
+failures=0
+rows=()
+details=()
+
+command_available() {
+  case "$1" in
+    */*) [ -x "$1" ] ;;
+    *) command -v "$1" >/dev/null 2>&1 ;;
+  esac
+}
+
+add_row() {
+  rows+=("$1${separator}$2${separator}$3")
+}
+
+fail_check() {
+  local name="$1"
+  local message="$2"
+  local output="${3:-}"
+
+  add_row "$name" "✗" "$message"
+  if [ -n "$output" ]; then
+    details+=("$name failed output:${output//$'\n'/$'\n  '}")
+  fi
+  failures=$((failures + 1))
+}
+
+if command_available "$readme_command"; then
+  if readme_output=$(cd "$repo_dir" && "$readme_command" build --check 2>&1); then
+    add_row "README" "✓" "README.md matches README.tsx"
+  else
+    fail_check "README" "README.md is stale; run readme build" "$readme_output"
+  fi
+else
+  fail_check "README" "readme command not found; run mise install"
+fi
+
+if command_available "$codebase_command"; then
+  if lint_output=$(cd "$repo_dir" && "$codebase_command" lint "$repo_dir" 2>&1); then
+    add_row "codebase" "✓" "configured convention lints pass"
+  else
+    fail_check "codebase" "configured convention lints failed" "$lint_output"
+  fi
+
+  if (cd "$repo_dir" && "$codebase_command" pre-commit --check >/dev/null 2>&1); then
+    add_row "pre-commit" "✓" "codebase pre-commit hook is installed"
+  else
+    add_row "pre-commit" "!" "optional local hook missing; run codebase pre-commit"
+  fi
+else
+  fail_check "codebase" "codebase command not found; run mise install"
+  add_row "pre-commit" "!" "codebase unavailable; hook check skipped"
+fi
+
+if command_available "$gum_command"; then
+  printf '%s\n' "${rows[@]}" |
+    "$gum_command" table -s "$separator" -c "CHECK,STATUS,DETAIL" -p --border normal
+else
+  for row in "${rows[@]}"; do
+    IFS="$separator" read -r name status message <<< "$row"
+    printf '%s %s - %s\n' "$status" "$name" "$message"
+  done
+fi
+
+if [ ${#details[@]} -gt 0 ]; then
+  printf '\n'
+  for detail in "${details[@]}"; do
+    printf '%s\n' "$detail"
+  done
+fi
+
+exit "$failures"

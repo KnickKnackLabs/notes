@@ -7,39 +7,46 @@
 # commit. See KnickKnackLabs/notes#49.
 set -eo pipefail
 
+NOTES_TOOL_ROOT="__NOTES_TOOL_ROOT__"
+source "$NOTES_TOOL_ROOT/lib/encryption.sh"
+
 if ! command -v git-crypt &>/dev/null; then
   echo "WARNING: git-crypt not found — skipping encryption check" >&2
   exit 0
 fi
 
+staged_input=$(mktemp) || {
+  echo "ERROR: Failed to create encryption hook staged-path input" >&2
+  exit 1
+}
+attribute_input=$(mktemp) || {
+  rm -f "$staged_input"
+  echo "ERROR: Failed to create encryption hook attribute input" >&2
+  exit 1
+}
+trap 'rm -f "$staged_input" "$attribute_input"' EXIT
+
 # Staged adds/copies/modifies/renames, NUL-delimited for path safety.
+if ! git diff --cached --name-only --diff-filter=ACMR -z > "$staged_input"; then
+  echo "ERROR: Could not inspect staged paths for encryption" >&2
+  exit 1
+fi
 staged=()
-while IFS= read -r -d '' path; do staged+=("$path"); done \
-  < <(git diff --cached --name-only --diff-filter=ACMR -z)
+while IFS= read -r -d '' path; do staged+=("$path"); done < "$staged_input"
 [ "${#staged[@]}" -eq 0 ] && exit 0
 
 # Which staged paths are under an encrypted (filter=git-crypt) pattern?
 # check-attr -z emits NUL-delimited <path> <attr> <value> triples.
+if ! git check-attr --cached -z filter -- "${staged[@]}" > "$attribute_input"; then
+  echo "ERROR: Could not inspect staged encryption attributes" >&2
+  exit 1
+fi
 encrypted_staged=()
 while IFS= read -r -d '' path \
    && IFS= read -r -d '' _attr \
    && IFS= read -r -d '' value; do
   [ "$value" = "git-crypt" ] && encrypted_staged+=("$path")
-done < <(git check-attr --cached -z filter -- "${staged[@]}")
+done < "$attribute_input"
 [ "${#encrypted_staged[@]}" -eq 0 ] && exit 0
 
-# Flag any that are currently plaintext (e.g. git-crypt locked at stage time).
-bad_files=()
-for file in "${encrypted_staged[@]}"; do
-  if { git-crypt status -- "$file" 2>&1 || true; } | grep -qi "not encrypted"; then
-    bad_files+=("$file")
-  fi
-done
-
-if [ "${#bad_files[@]}" -gt 0 ]; then
-  echo "ERROR: Staged files should be encrypted but are plaintext:" >&2
-  printf '  %s\n' "${bad_files[@]}" >&2
-  echo "" >&2
-  echo "Run 'notes unlock' if git-crypt is locked, then re-stage." >&2
-  exit 1
-fi
+verify_encrypted_paths "${encrypted_staged[@]}"

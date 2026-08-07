@@ -15,15 +15,220 @@
 detect_dual_present_conflicts() {
   local abs_notes_dir="${1:?usage: detect_dual_present_conflicts <abs_notes_dir>}"
   local manifest="$abs_notes_dir/.manifest"
+  local comparison_status
   [ ! -f "$manifest" ] && return 0
 
   while IFS=$'\t' read -r id relpath; do
     [ -z "$id" ] && continue
     [ -f "$abs_notes_dir/$id" ] || continue
     [ -f "$abs_notes_dir/$relpath" ] || continue
-    cmp -s "$abs_notes_dir/$id" "$abs_notes_dir/$relpath" && continue
-    printf '%s\t%s\n' "$id" "$relpath"
+    comparison_status=0
+    cmp -s "$abs_notes_dir/$id" "$abs_notes_dir/$relpath" || comparison_status=$?
+    case "$comparison_status" in
+      0) continue ;;
+      1) printf '%s\t%s\n' "$id" "$relpath" ;;
+      *) return "$comparison_status" ;;
+    esac
   done < "$manifest"
+}
+
+_prepare_change_detection_workspace() {
+  local abs_notes_dir="$1" repo_root="$2" notes_dir="$3" workspace="$4"
+  local manifest="$abs_notes_dir/.manifest"
+  local id relpath state_file=""
+
+  : > "$workspace/head-in"
+  : > "$workspace/raw-in"
+  : > "$workspace/manifest-ids"
+  : > "$workspace/manifest-names"
+
+  while IFS=$'\t' read -r id relpath; do
+    [ -z "$id" ] && continue
+    printf 'HEAD:%s/%s\n' "$notes_dir" "$id" >> "$workspace/head-in"
+    printf '%s\n' "$id" >> "$workspace/manifest-ids"
+    printf '%s\n' "$relpath" >> "$workspace/manifest-names"
+
+    if [ -f "$abs_notes_dir/$relpath" ]; then
+      printf '%s/%s\n' "$notes_dir" "$relpath" >> "$workspace/raw-in"
+    fi
+  done < "$manifest"
+
+  if declare -F detect_stale_readable_notes >/dev/null 2>&1; then
+    # Stale-state discovery is advisory during change classification.
+    if ! detect_stale_readable_notes "$abs_notes_dir" 2>/dev/null \
+      | while IFS=$'\t' read -r _stale_state stale_relpath; do
+          [ -n "$stale_relpath" ] && printf '%s\n' "$stale_relpath"
+        done > "$workspace/stale-readables"; then
+      :
+    fi
+  else
+    : > "$workspace/stale-readables"
+  fi
+
+  git -C "$repo_root" cat-file --batch-check='%(objectname)' \
+    < "$workspace/head-in" > "$workspace/head-out" 2>/dev/null || return 1
+  if [ -s "$workspace/raw-in" ]; then
+    git -C "$repo_root" hash-object --no-filters --stdin-paths \
+      < "$workspace/raw-in" > "$workspace/raw-out" 2>/dev/null || return 1
+  else
+    : > "$workspace/raw-out"
+  fi
+
+  if declare -F _deobfuscation_state_file >/dev/null 2>&1; then
+    state_file=$(_deobfuscation_state_file "$abs_notes_dir" 2>/dev/null) || state_file=""
+  fi
+  if [ -n "$state_file" ] && [ -f "$state_file" ]; then
+    awk -F '\t' '
+      FNR == NR {
+        if (NF >= 4) {
+          path[$1] = $2
+          tracked[$1] = $3
+          raw[$1] = $4
+        } else {
+          delete path[$1]
+          delete tracked[$1]
+          delete raw[$1]
+        }
+        next
+      }
+      {
+        if ($1 in path && path[$1] == $2) {
+          print tracked[$1] "|" raw[$1]
+        } else {
+          print "|"
+        }
+      }
+    ' "$state_file" "$manifest" > "$workspace/state-aligned"
+  else
+    awk '$1 != "" { print "|" }' "$manifest" > "$workspace/state-aligned"
+  fi
+}
+
+_classify_manifest_changes() {
+  local abs_notes_dir="$1" notes_dir="$2" workspace="$3"
+  local manifest="$abs_notes_dir/.manifest"
+  local id relpath readable_file head_hash head_exists state_pair state_tracked state_raw raw_hash
+
+  : > "$workspace/fallback-in"
+  : > "$workspace/fallback-meta"
+  : > "$workspace/tracked-attr-in"
+  : > "$workspace/readable-attr-in"
+
+  exec 3< "$workspace/head-out"
+  exec 4< "$workspace/raw-out"
+  exec 5< "$workspace/state-aligned"
+  while IFS=$'\t' read -r id relpath; do
+    [ -z "$id" ] && continue
+
+    readable_file="$abs_notes_dir/$relpath"
+    head_exists=true
+    IFS= read -r head_hash <&3 || head_hash=""
+    IFS= read -r state_pair <&5 || state_pair="|"
+    state_tracked="${state_pair%%|*}"
+    state_raw="${state_pair#*|}"
+    case "$head_hash" in
+      *" missing") head_exists=false ;;
+    esac
+
+    if [ -f "$readable_file" ]; then
+      IFS= read -r raw_hash <&4 || raw_hash=""
+
+      if ! $head_exists; then
+        printf 'new\t%s\n' "$relpath" >> "$workspace/detected"
+      elif [ -n "$state_raw" ] && [ "$state_tracked" = "$head_hash" ]; then
+        [ "$state_raw" != "$raw_hash" ] && printf 'modified\t%s\n' "$relpath" >> "$workspace/detected"
+      else
+        printf '%s/%s\n' "$notes_dir" "$relpath" >> "$workspace/fallback-in"
+        printf '%s\t%s\t%s\n' "$id" "$relpath" "$head_hash" >> "$workspace/fallback-meta"
+        printf '%s/%s\n' "$notes_dir" "$id" >> "$workspace/tracked-attr-in"
+        printf '%s/%s\n' "$notes_dir" "$relpath" >> "$workspace/readable-attr-in"
+      fi
+    elif [ ! -f "$abs_notes_dir/$id" ] && $head_exists; then
+      # If the obfuscated form still exists, the note simply is not deobfuscated.
+      printf 'deleted\t%s\n' "$relpath" >> "$workspace/detected"
+    fi
+  done < "$manifest"
+  exec 3<&-
+  exec 4<&-
+  exec 5<&-
+}
+
+_classify_fallback_changes() {
+  local repo_root="$1" notes_dir="$2" abs_notes_dir="$3" workspace="$4"
+  [ -s "$workspace/fallback-in" ] || return 0
+
+  local use_batch_hash=true
+  local id relpath head_hash disk_hash
+  # Preserve tracked-path filter semantics for legacy, missing, or stale
+  # state rows. Current four-field rows bypass filters through raw hashes.
+  if git -C "$repo_root" check-attr --stdin \
+    filter text eol ident working-tree-encoding \
+    < "$workspace/tracked-attr-in" > "$workspace/tracked-attr-out.raw" 2>/dev/null; then
+    sed 's/^[^:]*: //' "$workspace/tracked-attr-out.raw" > "$workspace/tracked-attr-out"
+  else
+    use_batch_hash=false
+  fi
+  if git -C "$repo_root" check-attr --stdin \
+    filter text eol ident working-tree-encoding \
+    < "$workspace/readable-attr-in" > "$workspace/readable-attr-out.raw" 2>/dev/null; then
+    sed 's/^[^:]*: //' "$workspace/readable-attr-out.raw" > "$workspace/readable-attr-out"
+  else
+    use_batch_hash=false
+  fi
+
+  if $use_batch_hash && cmp -s "$workspace/tracked-attr-out" "$workspace/readable-attr-out"; then
+    git -C "$repo_root" hash-object --stdin-paths \
+      < "$workspace/fallback-in" > "$workspace/fallback-out" 2>/dev/null || return 1
+
+    exec 6< "$workspace/fallback-out"
+    while IFS=$'\t' read -r id relpath head_hash; do
+      IFS= read -r disk_hash <&6 || disk_hash=""
+      [ "$head_hash" != "$disk_hash" ] && printf 'modified\t%s\n' "$relpath" >> "$workspace/detected"
+    done < "$workspace/fallback-meta"
+    exec 6<&-
+  else
+    while IFS=$'\t' read -r id relpath head_hash; do
+      if ! disk_hash=$(git -C "$repo_root" hash-object \
+        --path="$notes_dir/$id" "$abs_notes_dir/$relpath" 2>/dev/null); then
+        return 1
+      fi
+      [ "$head_hash" != "$disk_hash" ] && printf 'modified\t%s\n' "$relpath" >> "$workspace/detected"
+    done < "$workspace/fallback-meta"
+  fi
+
+  return 0
+}
+
+_classify_unmanaged_files() {
+  local abs_notes_dir="$1" workspace="$2"
+
+  find "$abs_notes_dir" -type f > "$workspace/all-files-unsorted" || return 1
+  sort "$workspace/all-files-unsorted" > "$workspace/all-files" || return 1
+  awk \
+    -v ids_file="$workspace/manifest-ids" \
+    -v names_file="$workspace/manifest-names" \
+    -v stale_file="$workspace/stale-readables" \
+    -v files_file="$workspace/all-files" \
+    -v root="$abs_notes_dir/" '
+      FILENAME == ids_file   { ids[$0] = 1; next }
+      FILENAME == names_file { names[$0] = 1; next }
+      FILENAME == stale_file { stale[$0] = 1; next }
+      FILENAME == files_file {
+        relpath = substr($0, length(root) + 1)
+        if (relpath == ".manifest") next
+
+        count = split(relpath, parts, "/")
+        base = parts[count]
+        if (base in ids || relpath in names) next
+
+        if (relpath in stale) {
+          print "stale-readable\t" relpath
+        } else {
+          print "new\t" relpath
+        }
+      }
+    ' "$workspace/manifest-ids" "$workspace/manifest-names" \
+      "$workspace/stale-readables" "$workspace/all-files"
 }
 
 # Detect changed notes relative to HEAD.
@@ -33,160 +238,67 @@ detect_dual_present_conflicts() {
 detect_changes() {
   local abs_notes_dir="${1:?usage: detect_changes <abs_notes_dir>}"
   local manifest="$abs_notes_dir/.manifest"
-  [ ! -f "$manifest" ] && return
+  [ ! -f "$manifest" ] && return 0
 
   resolve_notes_dir "$abs_notes_dir" || return
   local repo_root="$RESOLVED_REPO_ROOT"
   local notes_dir="$RESOLVED_NOTES_DIR"
+  require_readable_notes_state "$abs_notes_dir" || return
+  local workspace rc=0
+  workspace=$(mktemp -d) || return
+  : > "$workspace/detected"
 
-  local tmp_dir head_in head_out disk_in disk_out manifest_ids manifest_names stale_readables
-  local tracked_attr_in readable_attr_in tracked_attr_out readable_attr_out
-  tmp_dir=$(mktemp -d) || return
-  head_in="$tmp_dir/head-in"
-  head_out="$tmp_dir/head-out"
-  disk_in="$tmp_dir/disk-in"
-  disk_out="$tmp_dir/disk-out"
-  manifest_ids="$tmp_dir/manifest-ids"
-  manifest_names="$tmp_dir/manifest-names"
-  stale_readables="$tmp_dir/stale-readables"
-  tracked_attr_in="$tmp_dir/tracked-attr-in"
-  readable_attr_in="$tmp_dir/readable-attr-in"
-  tracked_attr_out="$tmp_dir/tracked-attr-out"
-  readable_attr_out="$tmp_dir/readable-attr-out"
-  : > "$head_in"
-  : > "$disk_in"
-  : > "$manifest_ids"
-  : > "$manifest_names"
-  : > "$stale_readables"
-  : > "$tracked_attr_in"
-  : > "$readable_attr_in"
-
-  while IFS=$'\t' read -r id relpath; do
-    [ -z "$id" ] && continue
-    printf 'HEAD:%s/%s\n' "$notes_dir" "$id" >> "$head_in"
-    printf '%s\n' "$id" >> "$manifest_ids"
-    printf '%s\n' "$relpath" >> "$manifest_names"
-
-    if [ -f "$abs_notes_dir/$relpath" ]; then
-      printf '%s/%s\n' "$notes_dir" "$relpath" >> "$disk_in"
-      printf '%s/%s\n' "$notes_dir" "$id" >> "$tracked_attr_in"
-      printf '%s/%s\n' "$notes_dir" "$relpath" >> "$readable_attr_in"
-    fi
-  done < "$manifest"
-
-  if declare -F detect_stale_readable_notes >/dev/null 2>&1; then
-    detect_stale_readable_notes "$abs_notes_dir" 2>/dev/null \
-      | while IFS=$'\t' read -r _stale_state stale_relpath; do
-          [ -n "$stale_relpath" ] && printf '%s\n' "$stale_relpath"
-        done > "$stale_readables" || true
-  fi
-
-  git -C "$repo_root" cat-file --batch-check='%(objectname)' < "$head_in" > "$head_out" 2>/dev/null || {
-    rm -rf "$tmp_dir"
-    return
-  }
-
-  local use_batch_hash=true
-  if [ -s "$disk_in" ]; then
-    # `hash-object --stdin-paths` hashes each readable file using attributes for
-    # that readable path. The old per-file implementation hashes readable bytes
-    # as the tracked obfuscated path (`--path=$notes_dir/$id`). Preserve that
-    # behavior by batching only when clean-filter-relevant attributes match.
-    if git -C "$repo_root" check-attr --stdin \
-      filter text eol ident working-tree-encoding \
-      < "$tracked_attr_in" > "$tracked_attr_out.raw" 2>/dev/null; then
-      sed 's/^[^:]*: //' "$tracked_attr_out.raw" > "$tracked_attr_out"
-    else
-      use_batch_hash=false
-    fi
-    if git -C "$repo_root" check-attr --stdin \
-      filter text eol ident working-tree-encoding \
-      < "$readable_attr_in" > "$readable_attr_out.raw" 2>/dev/null; then
-      sed 's/^[^:]*: //' "$readable_attr_out.raw" > "$readable_attr_out"
-    else
-      use_batch_hash=false
-    fi
-    if $use_batch_hash && cmp -s "$tracked_attr_out" "$readable_attr_out"; then
-      git -C "$repo_root" hash-object --stdin-paths < "$disk_in" > "$disk_out" 2>/dev/null || {
-        rm -rf "$tmp_dir"
-        return
-      }
-    else
-      use_batch_hash=false
-      : > "$disk_out"
-    fi
+  if _prepare_change_detection_workspace "$abs_notes_dir" "$repo_root" "$notes_dir" "$workspace"; then
+    :
   else
-    : > "$disk_out"
+    rc=$?
+    rm -rf "$workspace"
+    return "$rc"
+  fi
+  if _classify_manifest_changes "$abs_notes_dir" "$notes_dir" "$workspace"; then
+    :
+  else
+    rc=$?
+    rm -rf "$workspace"
+    return "$rc"
+  fi
+  if _classify_fallback_changes "$repo_root" "$notes_dir" "$abs_notes_dir" "$workspace"; then
+    :
+  else
+    rc=$?
+    rm -rf "$workspace"
+    return "$rc"
+  fi
+  if _classify_unmanaged_files "$abs_notes_dir" "$workspace" > "$workspace/unmanaged"; then
+    :
+  else
+    rc=$?
+    rm -rf "$workspace"
+    return "$rc"
+  fi
+  if ! cat "$workspace/unmanaged" >> "$workspace/detected"; then
+    rm -rf "$workspace"
+    return 1
   fi
 
-  exec 3< "$head_out"
-  exec 4< "$disk_out"
-  while IFS=$'\t' read -r id relpath; do
-    [ -z "$id" ] && continue
+  cat "$workspace/detected" || rc=$?
+  rm -rf "$workspace"
+  return "$rc"
+}
 
-    local readable_file="$abs_notes_dir/$relpath"
-    local head_hash head_exists=true
-    IFS= read -r head_hash <&3 || head_hash=""
-    case "$head_hash" in
-      *" missing") head_exists=false ;;
-    esac
+# Print ordinary diff output while preserving genuine diff execution failures.
+_emit_notes_diff() {
+  local status
+  if diff "$@"; then
+    return 0
+  else
+    status=$?
+  fi
 
-    if [ -f "$readable_file" ]; then
-      # File exists on disk — check if it's new or modified.
-      if ! $head_exists; then
-        printf 'new\t%s\n' "$relpath"
-        if $use_batch_hash; then
-          IFS= read -r _disk_hash <&4 || true
-        fi
-        continue
-      fi
-
-      local disk_hash
-      if $use_batch_hash; then
-        IFS= read -r disk_hash <&4 || disk_hash=""
-      else
-        disk_hash=$(git -C "$repo_root" hash-object --path="$notes_dir/$id" "$readable_file" 2>/dev/null) || continue
-      fi
-      if [ "$head_hash" != "$disk_hash" ]; then
-        printf 'modified\t%s\n' "$relpath"
-      fi
-    else
-      # Readable name not on disk — check if obfuscated form exists. If neither
-      # exists and HEAD has the obfuscated blob, the note was deleted. If the
-      # obfuscated form exists on disk, the file isn't deobfuscated — skip.
-      if [ ! -f "$abs_notes_dir/$id" ] && $head_exists; then
-        printf 'deleted\t%s\n' "$relpath"
-      fi
-    fi
-  done < "$manifest"
-  exec 3<&-
-  exec 4<&-
-
-  # Scan for new files not yet in the manifest.
-  while IFS= read -r f; do
-    [ ! -f "$f" ] && continue
-    local relpath="${f#"$abs_notes_dir"/}"
-    [[ "$relpath" == ".manifest" ]] && continue
-
-    # Skip obfuscated IDs that are in the manifest.
-    local base
-    base=$(basename "$relpath")
-    grep -Fxq "$base" "$manifest_ids" && continue
-
-    # Skip files already in the manifest by readable name.
-    grep -Fxq "$relpath" "$manifest_names" && continue
-
-    # Stale generated readables are a reconciliation issue, not author intent.
-    if grep -Fxq "$relpath" "$stale_readables"; then
-      printf 'stale-readable\t%s\n' "$relpath"
-      continue
-    fi
-
-    # This is a genuinely new file.
-    printf 'new\t%s\n' "$relpath"
-  done < <(find "$abs_notes_dir" -type f | sort)
-
-  rm -rf "$tmp_dir"
+  case "$status" in
+    1) return 0 ;; # differences found
+    *) return "$status" ;;
+  esac
 }
 
 # Show diffs for changed notes.
@@ -233,13 +345,13 @@ show_diffs() {
         local tmp
         tmp=$(mktemp) || continue
         git -C "$repo_root" cat-file --filters "HEAD:$git_path" > "$tmp" 2>/dev/null
-        diff -u --label "a/$relpath" --label "b/$relpath" "$tmp" "$readable_file" || true
+        _emit_notes_diff -u --label "a/$relpath" --label "b/$relpath" "$tmp" "$readable_file"
         rm -f "$tmp"
         echo ""
         ;;
       new)
         echo "=== $relpath (new) ==="
-        diff -u --label /dev/null --label "b/$relpath" /dev/null "$readable_file" || true
+        _emit_notes_diff -u --label /dev/null --label "b/$relpath" /dev/null "$readable_file"
         echo ""
         ;;
       deleted)
@@ -247,7 +359,7 @@ show_diffs() {
         local tmp
         tmp=$(mktemp) || continue
         git -C "$repo_root" cat-file --filters "HEAD:$git_path" > "$tmp" 2>/dev/null
-        diff -u --label "a/$relpath" --label /dev/null "$tmp" /dev/null || true
+        _emit_notes_diff -u --label "a/$relpath" --label /dev/null "$tmp" /dev/null
         rm -f "$tmp"
         echo ""
         ;;

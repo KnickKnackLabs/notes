@@ -10,6 +10,9 @@ source "$MISE_CONFIG_ROOT/lib/common.sh"
 source "$MISE_CONFIG_ROOT/lib/obfuscate.sh"
 source "$MISE_CONFIG_ROOT/lib/suppress.sh"
 source "$MISE_CONFIG_ROOT/lib/changes.sh"
+source "$MISE_CONFIG_ROOT/lib/hooks.sh"
+source "$MISE_CONFIG_ROOT/lib/encryption.sh"
+source "$MISE_CONFIG_ROOT/lib/stage.sh"
 require_git
 
 notes_dir="${usage_dir:-notes}"
@@ -24,12 +27,20 @@ fi
 # Parse variadic args
 ARGS=()
 if [ -n "${usage_files:-}" ]; then
+  args_snapshot=$(mktemp) || { echo "Error: failed to create argument snapshot" >&2; exit 1; }
+  parse_status=0
+  parse_variadic_args "$usage_files" > "$args_snapshot" || parse_status=$?
+  if [ "$parse_status" -ne 0 ]; then
+    rm -f "$args_snapshot"
+    exit "$parse_status"
+  fi
   while IFS= read -r arg; do
     arg="${arg#"${notes_dir}/"}"
     # Skip empty variadic defaults after xargs unquotes "''".
     [ -z "$arg" ] && continue
     ARGS+=("$arg")
-  done < <(printf '%s' "${usage_files}" | xargs printf '%s\n')
+  done < "$args_snapshot"
+  rm -f "$args_snapshot"
 fi
 
 scope_all="${usage_all:-false}"
@@ -59,8 +70,13 @@ scope_matches() {
   return 1
 }
 
-# Detect changes
-changes=$(detect_changes "$abs_notes_dir") || true
+# Detect changes. An unavailable manifest is a clean result.
+detect_status=0
+changes=$(detect_changes "$abs_notes_dir") || detect_status=$?
+if [ "$detect_status" -ne 0 ]; then
+  echo "Error: failed to inspect note changes." >&2
+  exit "$detect_status"
+fi
 
 if [ "$scope_all" != "true" ]; then
   unknown=()
@@ -109,7 +125,13 @@ if [ ${#stale_notes[@]} -gt 0 ]; then
   exit 1
 fi
 
-conflicting_notes=$(detect_dual_present_conflicts "$abs_notes_dir") || true
+conflicting_notes=""
+conflicting_notes_status=0
+conflicting_notes=$(detect_dual_present_conflicts "$abs_notes_dir") || conflicting_notes_status=$?
+if [ "$conflicting_notes_status" -ne 0 ]; then
+  echo "Error: failed to inspect dual-present note paths." >&2
+  exit "$conflicting_notes_status"
+fi
 if [ -n "$conflicting_notes" ]; then
   blocked_conflicts=()
   while IFS=$'\t' read -r conflict_id conflict_relpath; do
@@ -136,8 +158,11 @@ if [ -n "$conflicting_notes" ]; then
 fi
 
 double_tracked=""
-if ! double_tracked=$(detect_double_tracked_notes "$TARGET_DIR" "$notes_dir" 2>/dev/null); then
-  double_tracked=""
+double_tracked_status=0
+double_tracked=$(detect_double_tracked_notes "$TARGET_DIR" "$notes_dir") || double_tracked_status=$?
+if [ "$double_tracked_status" -ne 0 ]; then
+  echo "Error: failed to inspect double-tracked note paths." >&2
+  exit "$double_tracked_status"
 fi
 if [ -n "$double_tracked" ]; then
   blocked_tracked=()
@@ -193,42 +218,23 @@ if [ "${usage_dry_run:-}" = "true" ]; then
   exit 0
 fi
 
+if ! required_pre_commit_hooks_ready "$notes_dir"; then
+  echo "Error: required Notes pre-commit hooks are missing or stale; refusing to stage readable notes." >&2
+  echo "Run 'notes install-hooks --yes', then retry." >&2
+  exit 1
+fi
+
 # Stage each file using git add -f to bypass .git/info/exclude
 staged=0
 for relpath in ${to_stage[@]+"${to_stage[@]}"}; do
   local_file="$abs_notes_dir/$relpath"
 
   if [ -f "$local_file" ]; then
-    # Modified or new: force-add the readable file.
-    git -C "$TARGET_DIR" add -f "$notes_dir/$relpath"
-    echo "  staged: $relpath"
+    stage_readable_note "$TARGET_DIR" "$notes_dir" "$relpath"
   else
-    # Deleted: remove the obfuscated ID from the index.
-    id=$(manifest_id_for_name "$manifest" "$relpath")
-    if [ -n "$id" ]; then
-      # First remove the tracked blob when it is still present in the index.
-      # If the index cannot be updated (for example, an index lock exists),
-      # fail before mutating the working manifest. If a previous interrupted
-      # run already staged/removed the blob, keep going and only stage the
-      # manifest repair.
-      if git -C "$TARGET_DIR" ls-files --error-unmatch -- "$notes_dir/$id" >/dev/null 2>&1; then
-        git -C "$TARGET_DIR" rm --cached --quiet "$notes_dir/$id"
-      fi
-
-      tmp_manifest=$(mktemp) || exit 1
-      manifest_backup=$(mktemp) || exit 1
-      cp "$manifest" "$manifest_backup"
-      awk -F '\t' -v path="$relpath" '$2 != path { print $0 }' "$manifest" > "$tmp_manifest"
-      mv -f "$tmp_manifest" "$manifest"
-      if ! git -C "$TARGET_DIR" add -f "$notes_dir/.manifest"; then
-        mv -f "$manifest_backup" "$manifest"
-        exit 1
-      fi
-      rm -f "$manifest_backup"
-      echo "  staged (delete): $relpath"
-    fi
+    stage_deleted_note "$TARGET_DIR" "$notes_dir" "$manifest" "$relpath"
   fi
-  ((staged++)) || true
+  staged=$((staged + 1))
 done
 
 echo ""

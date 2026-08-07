@@ -93,7 +93,7 @@ normalize() {
   local src="$1" plaintext
   plaintext=$(mktemp "$WORK/plain.XXXXXX")
   decrypt_if_needed "$src" "$plaintext" || return 1
-  grep -v '^$' "$plaintext" 2>/dev/null | sort -t$'\t' -k2 || true
+  awk 'NF' "$plaintext" 2>/dev/null | sort -t$'\t' -k2
 }
 
 normalize "$ANCESTOR" > "$WORK/anc"
@@ -118,15 +118,15 @@ cut -f2 "$WORK/anc" "$WORK/ours" "$WORK/theirs" 2>/dev/null | sort -u > "$WORK/a
 
 # Merge
 has_conflict=false
-> "$WORK/merged"
-> "$WORK/conflicts"
+: > "$WORK/merged"
+: > "$WORK/conflicts"
 
 while IFS= read -r name; do
   [ -z "$name" ] && continue
 
-  a_id=$(id_for_name "$WORK/anc" "$name") || true
-  o_id=$(id_for_name "$WORK/ours" "$name") || true
-  t_id=$(id_for_name "$WORK/theirs" "$name") || true
+  a_id=$(id_for_name "$WORK/anc" "$name")
+  o_id=$(id_for_name "$WORK/ours" "$name")
+  t_id=$(id_for_name "$WORK/theirs" "$name")
 
   if [ -n "$o_id" ] && [ -n "$t_id" ]; then
     if [ "$o_id" = "$t_id" ]; then

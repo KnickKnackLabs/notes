@@ -71,11 +71,13 @@ _notes_conflict_lookup_readable_name() {
   # Prefer the current index entry when present, then ours/theirs/base for a
   # conflicted manifest. This is enough to map stable obfuscated IDs while
   # still refusing ambiguous or unproven mappings.
-  _notes_conflict_manifest_stage_to_file "$repo_root" "$notes_dir" 0 "$candidates" || true
-  _notes_conflict_manifest_stage_to_file "$repo_root" "$notes_dir" 2 "$candidates" || true
-  _notes_conflict_manifest_stage_to_file "$repo_root" "$notes_dir" 3 "$candidates" || true
-  _notes_conflict_manifest_stage_to_file "$repo_root" "$notes_dir" 1 "$candidates" || true
+  if ! _notes_conflict_manifest_stage_to_file "$repo_root" "$notes_dir" 0 "$candidates"; then :; fi
+  if ! _notes_conflict_manifest_stage_to_file "$repo_root" "$notes_dir" 2 "$candidates"; then :; fi
+  if ! _notes_conflict_manifest_stage_to_file "$repo_root" "$notes_dir" 3 "$candidates"; then :; fi
+  if ! _notes_conflict_manifest_stage_to_file "$repo_root" "$notes_dir" 1 "$candidates"; then :; fi
 
+  # Unsafe input unlinks temp files only while aborting; the open reader stays valid.
+  # shellcheck disable=SC2094
   while IFS=$'\t' read -r entry_id entry_name _extra; do
     [ "$entry_id" = "$id" ] || continue
     if ! _notes_conflict_guard_readable_path "$entry_name"; then
@@ -89,7 +91,9 @@ _notes_conflict_lookup_readable_name() {
   sorted_matches=$(mktemp) || { rm -f "$candidates" "$matches"; return 1; }
   sort -u "$matches" > "$sorted_matches"
   mv -f "$sorted_matches" "$matches"
-  count=$(grep -c . "$matches" 2>/dev/null || true)
+  if ! count=$(grep -c . "$matches" 2>/dev/null); then
+    count=0
+  fi
   case "$count" in
     0)
       rm -f "$candidates" "$matches"
@@ -112,11 +116,17 @@ _notes_conflict_lookup_readable_name() {
 
 notes_conflict_unmerged_paths() {
   local repo_root="$1" notes_dir="$2"
-  local meta git_path relpath tmp
+  local meta git_path relpath workspace rc=0
 
-  tmp=$(mktemp) || return 1
-  : > "$tmp"
+  workspace=$(mktemp -d) || return 1
+  if ! git -C "$repo_root" ls-files -u -- "$notes_dir" \
+    > "$workspace/unmerged" 2> "$workspace/git-error"; then
+    cat "$workspace/git-error" >&2
+    rm -rf "$workspace"
+    return 1
+  fi
 
+  : > "$workspace/paths"
   while IFS=$'\t' read -r meta git_path; do
     [ -n "$git_path" ] || continue
     case "$git_path" in
@@ -124,13 +134,18 @@ notes_conflict_unmerged_paths() {
       "$notes_dir"/*)
         relpath="${git_path#"$notes_dir/"}"
         [ -n "$relpath" ] || continue
-        printf '%s\n' "$git_path" >> "$tmp"
+        printf '%s\n' "$git_path" >> "$workspace/paths"
         ;;
     esac
-  done < <(git -C "$repo_root" ls-files -u -- "$notes_dir" 2>/dev/null || true)
+  done < "$workspace/unmerged"
 
-  sort -u "$tmp"
-  rm -f "$tmp"
+  if ! sort -u "$workspace/paths" > "$workspace/sorted"; then
+    rm -rf "$workspace"
+    return 1
+  fi
+  cat "$workspace/sorted" || rc=$?
+  rm -rf "$workspace"
+  return "$rc"
 }
 
 # Output one row per unmerged note-content path:
@@ -138,7 +153,14 @@ notes_conflict_unmerged_paths() {
 # The optional third argument may be "allow-unmapped" for status/reporting.
 notes_conflict_records() {
   local repo_root="$1" notes_dir="$2" mode="${3:-strict}"
-  local git_path id readable lookup_rc
+  local git_path id readable lookup_rc workspace rc=0
+
+  workspace=$(mktemp -d) || return 1
+  if ! notes_conflict_unmerged_paths "$repo_root" "$notes_dir" > "$workspace/paths"; then
+    rm -rf "$workspace"
+    return 1
+  fi
+  : > "$workspace/records"
 
   while IFS= read -r git_path; do
     [ -n "$git_path" ] || continue
@@ -146,10 +168,11 @@ notes_conflict_records() {
 
     if ! _notes_conflict_guard_id "$id"; then
       if [ "$mode" = "allow-unmapped" ]; then
-        printf '%s\t__NOTES_UNMAPPED__\t%s\n' "$id" "$git_path"
+        printf '%s\t__NOTES_UNMAPPED__\t%s\n' "$id" "$git_path" >> "$workspace/records"
         continue
       fi
       echo "Error: unsupported unmerged note path: $git_path" >&2
+      rm -rf "$workspace"
       return 1
     fi
 
@@ -164,12 +187,17 @@ notes_conflict_records() {
         if [ "$lookup_rc" -eq 2 ]; then
           echo "Error: missing manifest mapping for $git_path" >&2
         fi
+        rm -rf "$workspace"
         return 1
       fi
     fi
 
-    printf '%s\t%s\t%s\n' "$id" "$readable" "$git_path"
-  done < <(notes_conflict_unmerged_paths "$repo_root" "$notes_dir")
+    printf '%s\t%s\t%s\n' "$id" "$readable" "$git_path" >> "$workspace/records"
+  done < "$workspace/paths"
+
+  cat "$workspace/records" || rc=$?
+  rm -rf "$workspace"
+  return "$rc"
 }
 
 notes_conflict_require_three_stages() {

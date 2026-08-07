@@ -24,14 +24,23 @@ if [ ! -f "$manifest" ]; then
   echo "No manifest found. Run 'notes obfuscate' first." >&2
   exit 1
 fi
+require_readable_notes_state "$abs_notes_dir"
 
 ARGS=()
 if [ -n "${usage_files:-}" ]; then
+  args_snapshot=$(mktemp) || { echo "Error: failed to create argument snapshot" >&2; exit 1; }
+  parse_status=0
+  parse_variadic_args "$usage_files" > "$args_snapshot" || parse_status=$?
+  if [ "$parse_status" -ne 0 ]; then
+    rm -f "$args_snapshot"
+    exit "$parse_status"
+  fi
   while IFS= read -r arg; do
     arg="${arg#"${notes_dir}/"}"
     [ -z "$arg" ] && continue
     ARGS+=("$arg")
-  done < <(printf '%s' "${usage_files}" | xargs printf '%s\n')
+  done < "$args_snapshot"
+  rm -f "$args_snapshot"
 fi
 
 if [ -z "$message" ]; then
@@ -92,20 +101,23 @@ require_no_preexisting_staged_changes() {
   staged=$(git -C "$TARGET_DIR" diff --cached --name-only)
   if [ -n "$staged" ]; then
     echo "Error: staged changes already exist; refusing to mix them into notes commit." >&2
-    echo "$staged" | sed 's/^/  /' >&2
+    printf '  %s\n' "${staged//$'\n'/$'\n  '}" >&2
     echo "Commit or unstage them first, then retry." >&2
     exit 1
   fi
 }
 
 verify_no_readable_paths_tracked() {
-  local bad=() id relpath
+  local bad=() id relpath double_tracked
+  if ! double_tracked=$(detect_double_tracked_notes "$TARGET_DIR" "$notes_dir"); then
+    echo "Error: failed to inspect tracked readable note paths after commit." >&2
+    return 1
+  fi
+
   while IFS=$'\t' read -r id relpath; do
     [ -z "$id" ] && continue
-    if git -C "$TARGET_DIR" ls-files --error-unmatch -- "$notes_dir/$relpath" >/dev/null 2>&1; then
-      bad+=("$relpath")
-    fi
-  done < "$manifest"
+    bad+=("$relpath")
+  done <<< "$double_tracked"
 
   if [ ${#bad[@]} -gt 0 ]; then
     echo "Error: commit created tracked readable note path(s); repair before pushing:" >&2
@@ -147,17 +159,24 @@ verify_no_staged_residue() {
   staged=$(git -C "$TARGET_DIR" diff --cached --name-only)
   if [ -n "$staged" ]; then
     echo "Error: staged changes remain after notes commit:" >&2
-    echo "$staged" | sed 's/^/  /' >&2
+    printf '  %s\n' "${staged//$'\n'/$'\n  '}" >&2
     return 1
   fi
 }
 
 verify_commit_touched_only_notes() {
-  local changed=() bad=() path
+  local changed=() bad=() path changed_snapshot
+  changed_snapshot=$(mktemp) || return 1
+  if ! git -C "$TARGET_DIR" diff-tree --no-commit-id --name-only -r HEAD -- > "$changed_snapshot"; then
+    echo "Error: failed to inspect committed paths." >&2
+    rm -f "$changed_snapshot"
+    return 1
+  fi
   while IFS= read -r path; do
     [ -z "$path" ] && continue
     changed+=("$path")
-  done < <(git -C "$TARGET_DIR" diff-tree --no-commit-id --name-only -r HEAD --)
+  done < "$changed_snapshot"
+  rm -f "$changed_snapshot"
 
   for path in ${changed[@]+"${changed[@]}"}; do
     case "$path" in
@@ -177,7 +196,12 @@ verify_commit_touched_only_notes() {
 
 verify_selected_changes_clean() {
   local remaining bad_selected=() status relpath
-  remaining=$(detect_changes "$abs_notes_dir") || true
+  if remaining=$(detect_changes "$abs_notes_dir"); then
+    :
+  else
+    echo "Error: failed to verify remaining note changes." >&2
+    return 1
+  fi
 
   if [ -z "$remaining" ]; then
     echo "Notes changes: clean."

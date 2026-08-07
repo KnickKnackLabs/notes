@@ -15,6 +15,7 @@ TARGET_DIR="${NOTES_CALLER_PWD:-.}"
 NOTES_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NOTES_REPO_DIR="$(cd "$NOTES_LIB_DIR/.." && pwd)"
 HOOKS_DIR="$NOTES_REPO_DIR/hooks"
+source "$NOTES_LIB_DIR/readable-state.sh"
 
 # ── Require checks ────────────────────────────────────────────
 
@@ -51,6 +52,82 @@ require_initialized() {
   fi
 }
 
+# ── Assume-unchanged manifest detection ────────────────────
+
+# Check if notes/.manifest is marked assume-unchanged and if it differs from
+# HEAD. This catches a state where `git pull` would fail because Git sees
+# "local changes" to the manifest, but git status and notes changes both
+# report clean (because assume-unchanged hides the difference).
+#
+# Usage: detect_assume_unchanged_manifest <notes_dir>
+# Returns:
+#   0 — manifest is assume-unchanged and worktree differs from HEAD (needs repair)
+#   1 — manifest is assume-unchanged but worktree matches HEAD (safe to clear)
+#   2 — manifest is NOT assume-unchanged (no problem)
+#   3 — unable to determine (e.g. HEAD has no manifest yet)
+#
+# Side-effect: prints a diagnostic message to stderr when state is 0 or 1.
+# Set NOTES_QUIET_MANIFEST_CHECK=1 to suppress diagnostic output.
+detect_assume_unchanged_manifest() {
+  local notes_dir="${1:?usage: detect_assume_unchanged_manifest <notes_dir>}"
+  local manifest="$TARGET_DIR/$notes_dir/.manifest"
+
+  [ -f "$manifest" ] || return 2
+
+  # Check if assume-unchanged is set
+  local assume_flag
+  assume_flag=$(git -C "$TARGET_DIR" ls-files -v "$notes_dir/.manifest" 2>/dev/null | cut -c1)
+  if [ "$assume_flag" != "h" ]; then
+    return 2  # not assume-unchanged, no problem
+  fi
+
+  # Check if HEAD has the manifest
+  if ! git -C "$TARGET_DIR" cat-file -e "HEAD:$notes_dir/.manifest" 2>/dev/null; then
+    [ -z "${NOTES_QUIET_MANIFEST_CHECK:-}" ] && echo "Warning: $notes_dir/.manifest is assume-unchanged but HEAD has no manifest entry yet." >&2
+    return 3
+  fi
+
+  # Compare worktree to HEAD
+  local worktree_hash head_hash
+  worktree_hash=$(git -C "$TARGET_DIR" hash-object "$manifest" 2>/dev/null) || return 3
+  head_hash=$(git -C "$TARGET_DIR" rev-parse "HEAD:$notes_dir/.manifest" 2>/dev/null) || return 3
+
+  if [ "$worktree_hash" = "$head_hash" ]; then
+    # Worktree matches HEAD — safe to clear assume-unchanged
+    [ -z "${NOTES_QUIET_MANIFEST_CHECK:-}" ] && echo "Warning: $notes_dir/.manifest is assume-unchanged (matches HEAD). Clear with: git update-index --no-assume-unchanged $notes_dir/.manifest" >&2
+    return 1
+  else
+    # Worktree differs from HEAD — need manual repair
+    [ -z "${NOTES_QUIET_MANIFEST_CHECK:-}" ] && echo "Warning: $notes_dir/.manifest is assume-unchanged and DIFFERS from HEAD." >&2
+    [ -z "${NOTES_QUIET_MANIFEST_CHECK:-}" ] && echo "  Clear and stage: git update-index --no-assume-unchanged $notes_dir/.manifest && git add $notes_dir/.manifest" >&2
+    return 0
+  fi
+}
+
+# Clear assume-unchanged on notes/.manifest when it's safe (worktree matches HEAD).
+# Usage: repair_assume_unchanged_manifest <notes_dir>
+# Returns: 0 if cleared, 1 if not needed, 2 if cleared but content differs from HEAD.
+repair_assume_unchanged_manifest() {
+  local notes_dir="${1:?usage: repair_assume_unchanged_manifest <notes_dir>}"
+  local manifest="$TARGET_DIR/$notes_dir/.manifest"
+
+  local rc=0
+  detect_assume_unchanged_manifest "$notes_dir" || rc=$?
+
+  if [ "$rc" -eq 2 ] || [ "$rc" -eq 3 ]; then
+    return 1  # not needed or can't determine
+  fi
+
+  git -C "$TARGET_DIR" update-index --no-assume-unchanged "$notes_dir/.manifest"
+  echo "Cleared assume-unchanged on $notes_dir/.manifest" >&2
+
+  if [ "$rc" -eq 0 ]; then
+    return 2  # cleared but content differs from HEAD
+  fi
+
+  return 0
+}
+
 # ── Confirmation helpers ─────────────────────────────────────
 
 is_truthy() {
@@ -77,6 +154,8 @@ confirm_destructive() {
   fi
 
   if command -v gum >/dev/null 2>&1; then
+    # A terminal device intentionally carries prompt input, output, and errors.
+    # shellcheck disable=SC2094
     if gum confirm "$message" <"$tty_path" >"$tty_path" 2>"$tty_path"; then
       return 0
     fi
@@ -98,7 +177,28 @@ confirm_destructive() {
   esac
 }
 
-# ── Path helpers ────────────────────────────────────────────
+# Argument helpers
+
+# Parse mise's shell-quoted variadic argument string.
+#
+# Callers must snapshot this output before consuming it. A process substitution
+# would hide xargs/printf failures behind the consumer loop's exit status.
+# Usage: parse_variadic_args <raw-usage-value>
+parse_variadic_args() {
+  local raw="${1:-}" status=0
+  [ -n "$raw" ] || return 0
+
+  (
+    set -o pipefail
+    printf '%s' "$raw" | xargs printf '%s\n'
+  ) || status=$?
+  if [ "$status" -ne 0 ]; then
+    echo "Error: failed to parse variadic arguments." >&2
+    return "$status"
+  fi
+}
+
+# Path helpers
 
 # Resolve the notes directory path relative to the repo root.
 # Handles macOS symlinks (/tmp → /private/tmp) by resolving real paths.
@@ -158,13 +258,29 @@ detect_double_tracked_notes() {
   local repo_root="${1:?usage: detect_double_tracked_notes <repo_root> <notes_dir_rel>}"
   local notes_dir_rel="${2:?usage: detect_double_tracked_notes <repo_root> <notes_dir_rel>}"
   local manifest="$repo_root/$notes_dir_rel/.manifest"
+  local workspace snapshot tracked_paths tracked_path rc
   [ ! -f "$manifest" ] && return 0
 
-  while IFS=$'\t' read -r id relpath; do
-    [ -z "$id" ] && continue
-    # If the readable path is tracked in git's index, it's double-tracked.
-    if git -C "$repo_root" ls-files --error-unmatch -- "$notes_dir_rel/$relpath" >/dev/null 2>&1; then
-      printf '%s\t%s\n' "$id" "$relpath"
-    fi
-  done < "$manifest"
+  workspace=$(mktemp -d) || return 1
+  snapshot="$workspace/snapshot"
+  tracked_paths="$workspace/tracked-paths"
+  if ! git -C "$repo_root" ls-files -z -- "$notes_dir_rel" > "$snapshot"; then
+    rm -rf "$workspace"
+    return 1
+  fi
+
+  # Git quotes backslashes, quotes, and control characters in line-delimited
+  # output even with core.quotePath=false. Read its NUL-delimited snapshot and
+  # normalize the manifest-representable paths without starting more processes.
+  while IFS= read -r -d '' tracked_path; do
+    printf '%s\n' "$tracked_path"
+  done < "$snapshot" > "$tracked_paths"
+
+  awk -F '\t' -v tracked_file="$tracked_paths" -v prefix="$notes_dir_rel/" '
+    FILENAME == tracked_file { tracked[$0] = 1; next }
+    $1 != "" && ((prefix $2) in tracked) { print $1 "\t" $2 }
+  ' "$tracked_paths" "$manifest"
+  rc=$?
+  rm -rf "$workspace"
+  return "$rc"
 }

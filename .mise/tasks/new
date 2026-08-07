@@ -10,6 +10,8 @@
 #USAGE flag "--dir <dir>" default="notes" help="Notes directory relative to repo root"
 set -euo pipefail
 
+REPO_DIR="${MISE_CONFIG_ROOT:?MISE_CONFIG_ROOT not set}"
+source "$REPO_DIR/lib/readable-state.sh"
 TARGET_DIR="${NOTES_CALLER_PWD:-.}"
 notes_dir="$TARGET_DIR/${usage_dir:-notes}"
 today=$(date +%Y-%m-%d)
@@ -18,6 +20,7 @@ if [ ! -d "$notes_dir" ]; then
   echo "Error: notes directory not found: $notes_dir" >&2
   exit 1
 fi
+require_readable_notes_state "$notes_dir"
 
 file="$notes_dir/${usage_slug}.md"
 if [ -f "$file" ]; then

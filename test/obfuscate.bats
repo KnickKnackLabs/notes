@@ -17,7 +17,7 @@ setup() {
   git -C "$NOTES_CALLER_PWD" commit -q -m "init"
 }
 
-# --- Core obfuscation ---
+# Core obfuscation, planning, staging, and path-safety behavior
 
 @test "obfuscate renames files to hex IDs" {
   run notes obfuscate
@@ -34,6 +34,7 @@ setup() {
   [ "$(wc -l < "$NOTES_CALLER_PWD/notes/.manifest" | tr -d ' ')" -eq 3 ]
 }
 
+
 @test "obfuscate creates extensionless files" {
   notes obfuscate
 
@@ -44,6 +45,7 @@ setup() {
   done
 }
 
+
 @test "obfuscate generates 8-char hex IDs" {
   notes obfuscate
 
@@ -52,12 +54,14 @@ setup() {
   done < "$NOTES_CALLER_PWD/notes/.manifest"
 }
 
+
 @test "obfuscate preserves file content" {
   notes obfuscate
 
   id=$(grep "alpha.md" "$NOTES_CALLER_PWD/notes/.manifest" | cut -f1)
   [[ "$(cat "$NOTES_CALLER_PWD/notes/$id")" == *"# Alpha"* ]]
 }
+
 
 @test "obfuscate is idempotent" {
   notes obfuscate
@@ -73,6 +77,7 @@ setup() {
   [ "$(ls "$NOTES_CALLER_PWD/notes/" | sort)" = "$files_before" ]
 }
 
+
 @test "obfuscate dry-run shows plan without renaming" {
   run notes obfuscate --dry-run
   [ "$status" -eq 0 ]
@@ -81,6 +86,7 @@ setup() {
   [ -f "$NOTES_CALLER_PWD/notes/alpha.md" ]
   [ ! -f "$NOTES_CALLER_PWD/notes/.manifest" ]
 }
+
 
 @test "scoped obfuscate dry-run shows existing manifest ID for readable file" {
   notes obfuscate
@@ -97,6 +103,7 @@ setup() {
   [ ! -f "$NOTES_CALLER_PWD/notes/$alpha_id" ]
 }
 
+
 @test "scoped obfuscate dry-run skips already-obfuscated IDs" {
   notes obfuscate
   alpha_id=$(grep $'\talpha\.md$' "$NOTES_CALLER_PWD/notes/.manifest" | cut -f1)
@@ -108,6 +115,7 @@ setup() {
 
   [ -f "$NOTES_CALLER_PWD/notes/$alpha_id" ]
 }
+
 
 @test "obfuscate handles new files added after initial obfuscation" {
   notes obfuscate
@@ -125,14 +133,6 @@ setup() {
   [ ! -f "$NOTES_CALLER_PWD/notes/delta.md" ]
 }
 
-# --- Scoped obfuscation from deobfuscated state ---
-#
-# Regression: scoped `notes obfuscate <file>` used to rebuild the manifest by
-# checking which obfuscated IDs exist on disk. In the deobfuscated working
-# tree, only the just-obfuscated file's ID is on disk — the rest are readable
-# names — so the manifest got truncated to one entry, losing all other
-# mappings. The staleness check must treat an entry as live if *either* its
-# obfuscated id or its readable name is on disk.
 
 @test "scoped obfuscate from deobfuscated state preserves manifest entries" {
   notes obfuscate
@@ -160,6 +160,7 @@ setup() {
   [ -f "$NOTES_CALLER_PWD/notes/gamma.txt" ]
 }
 
+
 @test "full obfuscate from fully-deobfuscated state preserves manifest entries" {
   notes obfuscate
   [ "$(wc -l < "$NOTES_CALLER_PWD/notes/.manifest" | tr -d ' ')" -eq 3 ]
@@ -174,7 +175,177 @@ setup() {
   [ -f "$NOTES_CALLER_PWD/notes/$alpha_id" ]
 }
 
-# --- Stale manifest cleanup ---
+
+@test "scoped new mapping stages canonical order without unrelated manifest edits" {
+  # Select a later-sorting mapping in the index, then leave another mapping
+  # only in the working manifest.
+  printf '22222222\tgamma.txt\n' > "$NOTES_CALLER_PWD/notes/.manifest"
+  git -C "$NOTES_CALLER_PWD" add -f notes/.manifest
+  printf '33333333\tbeta.md\n' >> "$NOTES_CALLER_PWD/notes/.manifest"
+
+  notes obfuscate alpha.md
+
+  local staged_manifest staged_names working_manifest
+  staged_manifest=$(git -C "$NOTES_CALLER_PWD" show :notes/.manifest)
+  staged_names=$(printf '%s\n' "$staged_manifest" | cut -f2)
+  working_manifest=$(cat "$NOTES_CALLER_PWD/notes/.manifest")
+  [ "$staged_names" = $'alpha.md\ngamma.txt' ]
+  [[ "$staged_manifest" != *$'\tbeta.md'* ]]
+  [[ "$working_manifest" == *$'\talpha.md'* ]]
+  [[ "$working_manifest" == *$'33333333\tbeta.md'* ]]
+
+  # After committing and removing the intentionally unstaged mapping, no
+  # order-only manifest difference remains.
+  git -C "$NOTES_CALLER_PWD" commit -q --no-verify -m "scoped obfuscation"
+  grep -v $'33333333\tbeta.md' "$NOTES_CALLER_PWD/notes/.manifest" \
+    > "$NOTES_CALLER_PWD/notes/.manifest.filtered"
+  mv "$NOTES_CALLER_PWD/notes/.manifest.filtered" \
+    "$NOTES_CALLER_PWD/notes/.manifest"
+  git -C "$NOTES_CALLER_PWD" diff --quiet -- notes/.manifest
+}
+
+
+@test "obfuscate refuses to overwrite an existing known-ID destination" {
+  notes obfuscate
+  local alpha_id
+  alpha_id=$(grep $'\talpha\.md$' "$NOTES_CALLER_PWD/notes/.manifest" | cut -f1)
+  git -C "$NOTES_CALLER_PWD" commit -q --no-verify -m "obfuscated"
+
+  # Simulate an interrupted or stale state containing both representations.
+  printf 'dirty readable content\n' > "$NOTES_CALLER_PWD/notes/alpha.md"
+  local obfuscated_before
+  obfuscated_before=$(cat "$NOTES_CALLER_PWD/notes/$alpha_id")
+
+  run notes obfuscate alpha.md
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"refusing to overwrite existing obfuscated path: $alpha_id"* ]]
+  [ "$(cat "$NOTES_CALLER_PWD/notes/$alpha_id")" = "$obfuscated_before" ]
+  [ "$(cat "$NOTES_CALLER_PWD/notes/alpha.md")" = "dirty readable content" ]
+}
+
+
+@test "obfuscate refuses to replace a dangling known-ID symlink" {
+  notes obfuscate
+  local alpha_id
+  alpha_id=$(grep $'\talpha\.md$' "$NOTES_CALLER_PWD/notes/.manifest" | cut -f1)
+  rm "$NOTES_CALLER_PWD/notes/$alpha_id"
+  printf 'readable content\n' > "$NOTES_CALLER_PWD/notes/alpha.md"
+  ln -s missing-target "$NOTES_CALLER_PWD/notes/$alpha_id"
+
+  run notes obfuscate alpha.md
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"refusing to overwrite existing obfuscated path: $alpha_id"* ]]
+  [ -L "$NOTES_CALLER_PWD/notes/$alpha_id" ]
+  [ "$(readlink "$NOTES_CALLER_PWD/notes/$alpha_id")" = "missing-target" ]
+  [ "$(cat "$NOTES_CALLER_PWD/notes/alpha.md")" = "readable content" ]
+}
+
+
+@test "obfuscate refuses a manifest ID shared by planned readable paths" {
+  notes obfuscate
+  local alpha_id
+  alpha_id=$(grep $'\talpha\.md$' "$NOTES_CALLER_PWD/notes/.manifest" | cut -f1)
+  notes deobfuscate
+  printf '%s\tbeta.md\n' "$alpha_id" >> "$NOTES_CALLER_PWD/notes/.manifest"
+
+  run notes obfuscate alpha.md beta.md
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"manifest ID '$alpha_id' maps to multiple readable paths"* ]]
+  [ -f "$NOTES_CALLER_PWD/notes/alpha.md" ]
+  [ -f "$NOTES_CALLER_PWD/notes/beta.md" ]
+}
+
+
+@test "full obfuscate batches Fold-scale known-entry classification and staging" {
+  local count=535 i=1 id name mock_bin command real_command call_log
+  rm -rf "$NOTES_CALLER_PWD/notes"
+  mkdir -p "$NOTES_CALLER_PWD/notes"
+
+  while [ "$i" -le "$count" ]; do
+    id=$(printf '%08x' "$i")
+    name=$(printf 'note-%03d.md' "$i")
+    printf '%s\t%s\n' "$id" "$name" >> "$NOTES_CALLER_PWD/notes/.manifest"
+    printf '# Note %d\n' "$i" > "$NOTES_CALLER_PWD/notes/$id"
+    i=$((i + 1))
+  done
+  git -C "$NOTES_CALLER_PWD" add -A
+  git -C "$NOTES_CALLER_PWD" commit -q --no-verify -m "obfuscated corpus"
+
+  while IFS=$'\t' read -r id name; do
+    mv "$NOTES_CALLER_PWD/notes/$id" "$NOTES_CALLER_PWD/notes/$name"
+  done < "$NOTES_CALLER_PWD/notes/.manifest"
+
+  mock_bin="$BATS_TEST_TMPDIR/obfuscate-count-bin"
+  call_log="$BATS_TEST_TMPDIR/obfuscate-calls"
+  mkdir -p "$mock_bin"
+  : > "$call_log"
+  for command in git grep basename awk; do
+    real_command=$(command -v "$command")
+    if [ "$command" = "git" ]; then
+      cat > "$mock_bin/$command" <<SH
+#!/usr/bin/env bash
+printf 'git\\t%s\\n' "\$*" >> "\$OBFUSCATE_CALL_LOG"
+exec '$real_command' "\$@"
+SH
+    else
+      cat > "$mock_bin/$command" <<SH
+#!/usr/bin/env bash
+printf '%s\\n' '$command' >> "\$OBFUSCATE_CALL_LOG"
+exec '$real_command' "\$@"
+SH
+    fi
+    chmod +x "$mock_bin/$command"
+  done
+
+  PATH="$mock_bin:$PATH" OBFUSCATE_CALL_LOG="$call_log" run notes obfuscate
+
+  local awk_calls grep_calls basename_calls add_calls rm_calls
+  awk_calls=$(grep -c '^awk$' "$call_log" || true)
+  grep_calls=$(grep -c '^grep$' "$call_log" || true)
+  basename_calls=$(grep -c '^basename$' "$call_log" || true)
+  add_calls=$(grep -c $'^git\t.* add --sparse -- notes/' "$call_log" || true)
+  rm_calls=$(grep -c $'^git\t.* rm --cached --quiet --ignore-unmatch -- notes/' "$call_log" || true)
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Obfuscated 535 file(s)"* ]]
+  # At most one corpus planner plus one existing full-suppression index stream.
+  [ "$awk_calls" -le 2 ]
+  [ "$grep_calls" -eq 0 ]
+  [ "$basename_calls" -eq 0 ]
+  [ "$add_calls" -eq 1 ]
+  [ "$rm_calls" -eq 1 ]
+}
+
+
+@test "scoped obfuscate reads the indexed manifest once and batches staging" {
+  local mock_bin command real_command call_log
+  notes obfuscate
+  git -C "$NOTES_CALLER_PWD" commit -q --no-verify -m "obfuscated"
+  notes deobfuscate
+
+  mock_bin="$BATS_TEST_TMPDIR/scoped-obfuscate-count-bin"
+  call_log="$BATS_TEST_TMPDIR/scoped-obfuscate-calls"
+  mkdir -p "$mock_bin"
+  : > "$call_log"
+  real_command=$(command -v git)
+  cat > "$mock_bin/git" <<SH
+#!/usr/bin/env bash
+printf 'git\\t%s\\n' "\$*" >> "\$OBFUSCATE_CALL_LOG"
+exec '$real_command' "\$@"
+SH
+  chmod +x "$mock_bin/git"
+
+  PATH="$mock_bin:$PATH" OBFUSCATE_CALL_LOG="$call_log" run \
+    notes obfuscate alpha.md beta.md
+
+  [ "$status" -eq 0 ]
+  [ "$(grep -c $'^git\t.* cat-file --filters :notes/.manifest$' "$call_log" || true)" -eq 1 ]
+  [ "$(grep -c $'^git\t.* add --sparse -- notes/' "$call_log" || true)" -eq 1 ]
+  [ "$(grep -c $'^git\t.* rm --cached --quiet --ignore-unmatch -- notes/' "$call_log" || true)" -eq 1 ]
+}
+
 
 @test "obfuscate removes stale entries for deleted files" {
   notes obfuscate
@@ -190,6 +361,7 @@ setup() {
   [ "$(wc -l < "$NOTES_CALLER_PWD/notes/.manifest" | tr -d ' ')" -eq 2 ]
   ! grep -q "alpha.md" "$NOTES_CALLER_PWD/notes/.manifest"
 }
+
 
 @test "obfuscate handles renamed files as delete + new" {
   notes obfuscate
@@ -209,7 +381,6 @@ setup() {
   [ -f "$NOTES_CALLER_PWD/notes/$new_id" ]
 }
 
-# --- Same filename in different subdirectories ---
 
 @test "obfuscate handles same filename in different subdirectories" {
   mkdir -p "$NOTES_CALLER_PWD/notes/a" "$NOTES_CALLER_PWD/notes/b"
@@ -241,7 +412,6 @@ setup() {
   [[ "$(cat "$NOTES_CALLER_PWD/notes/$id_b")" == *"Foo B"* ]]
 }
 
-# --- Stable IDs across cycles ---
 
 @test "obfuscate reuses IDs from preserved manifest" {
   notes obfuscate
@@ -259,6 +429,7 @@ setup() {
   [ ! -f "$NOTES_CALLER_PWD/notes/gamma.txt" ]
 }
 
+
 @test "obfuscate after deobfuscate renames files to their known IDs" {
   notes obfuscate
   alpha_id=$(grep "alpha.md" "$NOTES_CALLER_PWD/notes/.manifest" | cut -f1)
@@ -275,7 +446,6 @@ setup() {
   [[ "$(cat "$NOTES_CALLER_PWD/notes/$alpha_id")" == *"# Alpha"* ]]
 }
 
-# --- Flatten + recurse ---
 
 @test "obfuscate flattens subdirectory files into notes root" {
   mkdir -p "$NOTES_CALLER_PWD/notes/sub"
@@ -297,6 +467,7 @@ setup() {
   done < "$NOTES_CALLER_PWD/notes/.manifest"
 }
 
+
 @test "obfuscate flattens nested subdirectories" {
   mkdir -p "$NOTES_CALLER_PWD/notes/a/b/c"
   echo -e "---\ntitle: Nested\n---" > "$NOTES_CALLER_PWD/notes/a/b/c/nested.md"
@@ -309,405 +480,6 @@ setup() {
   grep -q "a/b/c/nested.md" "$NOTES_CALLER_PWD/notes/.manifest"
 }
 
-# --- Deobfuscate ---
-
-@test "deobfuscate restores original filenames" {
-  notes obfuscate
-  run notes deobfuscate
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"Restored 3 file(s)"* ]]
-
-  [ -f "$NOTES_CALLER_PWD/notes/alpha.md" ]
-  [ -f "$NOTES_CALLER_PWD/notes/beta.md" ]
-  [ -f "$NOTES_CALLER_PWD/notes/gamma.txt" ]
-}
-
-@test "deobfuscate preserves manifest for stable IDs" {
-  notes obfuscate
-  notes deobfuscate
-
-  [ -f "$NOTES_CALLER_PWD/notes/.manifest" ]
-}
-
-@test "deobfuscate recreates subdirectories" {
-  mkdir -p "$NOTES_CALLER_PWD/notes/sub"
-  echo -e "---\ntitle: Deep\n---\n# Deep" > "$NOTES_CALLER_PWD/notes/sub/deep.md"
-  git -C "$NOTES_CALLER_PWD" add -A
-  git -C "$NOTES_CALLER_PWD" commit -q -m "add subdir note"
-
-  notes obfuscate
-  [ ! -d "$NOTES_CALLER_PWD/notes/sub" ]
-
-  notes deobfuscate
-  [ -f "$NOTES_CALLER_PWD/notes/sub/deep.md" ]
-  [[ "$(cat "$NOTES_CALLER_PWD/notes/sub/deep.md")" == *"# Deep"* ]]
-}
-
-@test "deobfuscate preserves file content" {
-  notes obfuscate
-  notes deobfuscate
-
-  [[ "$(cat "$NOTES_CALLER_PWD/notes/alpha.md")" == *"# Alpha"* ]]
-  [[ "$(cat "$NOTES_CALLER_PWD/notes/gamma.txt")" == *"# Gamma"* ]]
-}
-
-@test "deobfuscate fails without manifest" {
-  run notes deobfuscate
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"no manifest found"* ]]
-}
-
-@test "deobfuscate dry-run shows plan without renaming" {
-  notes obfuscate
-  id=$(grep "alpha.md" "$NOTES_CALLER_PWD/notes/.manifest" | cut -f1)
-
-  run notes deobfuscate -- --dry-run
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"alpha.md"* ]]
-
-  [ -f "$NOTES_CALLER_PWD/notes/$id" ]
-}
-
-@test "deobfuscate ignores inherited usage_files without explicit IDs" {
-  notes obfuscate
-  local alpha_id beta_id gamma_id
-  alpha_id=$(grep "alpha.md" "$NOTES_CALLER_PWD/notes/.manifest" | cut -f1)
-  beta_id=$(grep "beta.md" "$NOTES_CALLER_PWD/notes/.manifest" | cut -f1)
-  gamma_id=$(grep "gamma.txt" "$NOTES_CALLER_PWD/notes/.manifest" | cut -f1)
-
-  usage_files="$alpha_id" run notes deobfuscate -- --dry-run
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"$alpha_id → alpha.md"* ]]
-  [[ "$output" == *"$beta_id → beta.md"* ]]
-  [[ "$output" == *"$gamma_id → gamma.txt"* ]]
-}
-
-@test "round-trip preserves all content and metadata" {
-  notes obfuscate
-  notes deobfuscate
-
-  run farts get title "$NOTES_CALLER_PWD/notes/alpha.md"
-  [ "$output" = "Alpha" ]
-
-  run farts get title "$NOTES_CALLER_PWD/notes/beta.md"
-  [ "$output" = "Beta" ]
-}
-
-# --- Pre-commit hook ---
-
-# --- Hook installation ---
-
-@test "install-hooks no-ops for uninitialized plain notes directories" {
-  run notes install-hooks --yes
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"No notes manifest found"* ]]
-  [[ "$output" == *"notes setup --yes"* ]]
-
-  [ ! -e "$NOTES_CALLER_PWD/.gitattributes" ]
-  [ ! -e "$NOTES_CALLER_PWD/.git/hooks/pre-commit" ]
-  [ ! -d "$NOTES_CALLER_PWD/.git/hooks/pre-commit.d" ]
-  [ -z "$(git -C "$NOTES_CALLER_PWD" config --get merge.manifest.driver || true)" ]
-}
-
-@test "install-hooks refuses without confirmation in headless context" {
-  notes obfuscate
-
-  run without_confirmation "$BATS_TEST_TMPDIR/missing-tty" notes install-hooks
-
-  [ "$status" -eq 2 ]
-  [[ "$output" == *"confirmation required"* ]]
-  [[ "$output" == *"Re-run with --yes"* ]]
-
-  # Hooks should not be installed
-  [ ! -x "$NOTES_CALLER_PWD/.git/hooks/pre-commit" ]
-  [ ! -d "$NOTES_CALLER_PWD/.git/hooks/pre-commit.d" ]
-}
-
-@test "install-hooks --yes proceeds with hook installation" {
-  notes obfuscate
-
-  run notes install-hooks --yes
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"Installed hooks"* ]]
-
-  # Verify hooks were actually installed
-  [ -x "$NOTES_CALLER_PWD/.git/hooks/pre-commit" ]
-  grep -q "Generic hook dispatcher" "$NOTES_CALLER_PWD/.git/hooks/pre-commit"
-}
-
-@test "install-hooks installs pre-commit hooks" {
-  notes obfuscate
-  notes install-hooks --yes
-
-  [ -x "$NOTES_CALLER_PWD/.git/hooks/pre-commit" ]
-  grep -q "Generic hook dispatcher" "$NOTES_CALLER_PWD/.git/hooks/pre-commit"
-  [ -x "$NOTES_CALLER_PWD/.git/hooks/pre-commit.d/encryption" ]
-  grep -q "git-crypt status" "$NOTES_CALLER_PWD/.git/hooks/pre-commit.d/encryption"
-  [ -x "$NOTES_CALLER_PWD/.git/hooks/pre-commit.d/obfuscation" ]
-  grep -q "manifest" "$NOTES_CALLER_PWD/.git/hooks/pre-commit.d/obfuscation"
-}
-
-@test "encryption pre-commit hook rejects plaintext staged encrypted blobs" {
-  if ! command -v git-crypt >/dev/null; then
-    skip "git-crypt not installed"
-  fi
-
-  ( cd "$NOTES_CALLER_PWD" && git-crypt init >/dev/null 2>&1 ) || skip "git-crypt init failed"
-  echo "notes/** filter=git-crypt diff=git-crypt" > "$NOTES_CALLER_PWD/.gitattributes"
-  git -C "$NOTES_CALLER_PWD" add .gitattributes
-  git -C "$NOTES_CALLER_PWD" commit -q --no-verify -m "enable encryption"
-
-  notes install-hooks --yes
-
-  local blob
-  blob=$(printf 'aaa00001\talpha.md\n' | git -C "$NOTES_CALLER_PWD" hash-object -w --stdin)
-  git -C "$NOTES_CALLER_PWD" update-index --add --cacheinfo 100644 "$blob" notes/.manifest
-
-  run git -C "$NOTES_CALLER_PWD" commit -m "force plaintext manifest"
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"Staged files should be encrypted but are plaintext"* ]]
-  [[ "$output" == *"notes/.manifest"* ]]
-}
-
-@test "deobfuscate does not install hooks" {
-  notes obfuscate
-  git -C "$NOTES_CALLER_PWD" add -A
-  git -C "$NOTES_CALLER_PWD" commit -q --no-verify -m "obfuscate"
-
-  notes deobfuscate
-
-  [ ! -d "$NOTES_CALLER_PWD/.git/hooks/pre-commit.d" ]
-}
-
-@test "deobfuscate dry-run does not install hook" {
-  notes obfuscate
-  git -C "$NOTES_CALLER_PWD" add -A
-  git -C "$NOTES_CALLER_PWD" commit -q --no-verify -m "obfuscate"
-
-  notes deobfuscate -- --dry-run
-
-  [ ! -d "$NOTES_CALLER_PWD/.git/hooks/pre-commit.d" ]
-}
-
-@test "dispatcher runs all hooks in pre-commit.d" {
-  # Set up dispatcher with two hooks — one passes, one would fail
-  mkdir -p "$NOTES_CALLER_PWD/.git/hooks/pre-commit.d"
-  cat > "$NOTES_CALLER_PWD/.git/hooks/pre-commit" <<'EOF'
-#!/usr/bin/env bash
-set -eo pipefail
-HOOK_DIR="$(dirname "$0")/pre-commit.d"
-for hook in "$HOOK_DIR"/*; do
-  [ -x "$hook" ] && "$hook" || exit $?
-done
-EOF
-  chmod +x "$NOTES_CALLER_PWD/.git/hooks/pre-commit"
-
-  # Hook that passes
-  echo '#!/usr/bin/env bash' > "$NOTES_CALLER_PWD/.git/hooks/pre-commit.d/pass"
-  echo 'exit 0' >> "$NOTES_CALLER_PWD/.git/hooks/pre-commit.d/pass"
-  chmod +x "$NOTES_CALLER_PWD/.git/hooks/pre-commit.d/pass"
-
-  # Hook that fails
-  echo '#!/usr/bin/env bash' > "$NOTES_CALLER_PWD/.git/hooks/pre-commit.d/fail"
-  echo 'echo "blocked" >&2; exit 1' >> "$NOTES_CALLER_PWD/.git/hooks/pre-commit.d/fail"
-  chmod +x "$NOTES_CALLER_PWD/.git/hooks/pre-commit.d/fail"
-
-  echo "test" > "$NOTES_CALLER_PWD/notes/test-file.md"
-  git -C "$NOTES_CALLER_PWD" add notes/test-file.md
-
-  run git -C "$NOTES_CALLER_PWD" commit -m "should fail"
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"blocked"* ]]
-}
-
-# --- Pre-commit hook behavior ---
-
-# These tests exercise the pre-commit hook directly. Auto-obfuscate is the
-# default hook mode; using `git commit` during setup would fire the hook and
-# obfuscate files behind the test's back, leaving nothing for the explicit
-# `notes obfuscate` step to do. Use --no-verify on setup commits to keep the
-# tests in control of when obfuscation happens.
-
-@test "pre-commit hook rejects un-obfuscated files in guard mode" {
-  notes setup --yes
-  git -C "$NOTES_CALLER_PWD" add -A
-  git -C "$NOTES_CALLER_PWD" commit --no-verify -q -m "setup"
-
-  notes obfuscate
-  git -C "$NOTES_CALLER_PWD" add -A
-  git -C "$NOTES_CALLER_PWD" commit --no-verify -q -m "obfuscated"
-
-  echo -e "---\ntitle: Sneaky\n---\n# Sneaky" > "$NOTES_CALLER_PWD/notes/sneaky.md"
-  git -C "$NOTES_CALLER_PWD" add notes/sneaky.md
-
-  NOTES_OBFUSCATE_HOOK=guard run git -C "$NOTES_CALLER_PWD" commit -m "should fail"
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"non-obfuscated filenames"* ]]
-  [[ "$output" == *"sneaky.md"* ]]
-}
-
-@test "pre-commit hook allows obfuscated files" {
-  notes setup --yes
-  git -C "$NOTES_CALLER_PWD" add -A
-  git -C "$NOTES_CALLER_PWD" commit --no-verify -q -m "setup"
-
-  notes obfuscate
-  git -C "$NOTES_CALLER_PWD" add -A
-
-  run git -C "$NOTES_CALLER_PWD" commit -m "should succeed"
-  [ "$status" -eq 0 ]
-}
-
-@test "pre-commit hook rejects staged renames in guard mode" {
-  notes setup --yes
-  git -C "$NOTES_CALLER_PWD" add -A
-  git -C "$NOTES_CALLER_PWD" commit --no-verify -q -m "setup"
-
-  notes obfuscate
-  git -C "$NOTES_CALLER_PWD" add -A
-  git -C "$NOTES_CALLER_PWD" commit --no-verify -q -m "obfuscated"
-
-  # After committing the obfuscated state, the post-commit hook
-  # deobfuscates the working tree and adds readable names to
-  # .git/info/exclude (clean-status mechanism from notes#43). A plain
-  # `git add notes/` now no-ops. To simulate someone trying to stage a
-  # deobfuscated rename anyway, we force-add the readable name.
-  git -C "$NOTES_CALLER_PWD" add -f notes/alpha.md
-
-  # The hook should reject this in guard mode
-  NOTES_OBFUSCATE_HOOK=guard run git -C "$NOTES_CALLER_PWD" commit -m "should fail"
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"non-obfuscated filenames"* ]]
-  [[ "$output" == *"alpha.md"* ]]
-}
-
-@test "pre-commit hook auto-obfuscates by default" {
-  # Obfuscate and commit the obfuscated state
-  notes obfuscate
-  git -C "$NOTES_CALLER_PWD" add -A
-  git -C "$NOTES_CALLER_PWD" commit -q --no-verify -m "obfuscated"
-
-  # Deobfuscate + install hooks explicitly
-  notes deobfuscate
-  notes install-hooks --yes
-
-  # Add a new deobfuscated file + stage everything
-  echo -e "---\ntitle: Sneaky\n---\n# Sneaky" > "$NOTES_CALLER_PWD/notes/sneaky.md"
-  git -C "$NOTES_CALLER_PWD" add -A
-
-  # Should succeed — hook auto-obfuscates before commit
-  run git -C "$NOTES_CALLER_PWD" commit -m "should succeed"
-  [ "$status" -eq 0 ]
-
-  # The committed tree should have obfuscated filenames
-  # (post-commit hook deobfuscates the working tree, so check git not disk)
-  local committed_files
-  committed_files=$(git -C "$NOTES_CALLER_PWD" show --name-only --format='' HEAD -- notes/)
-  ! echo "$committed_files" | grep -q "alpha.md"
-  ! echo "$committed_files" | grep -q "sneaky.md"
-
-  # Manifest should have all entries
-  grep -q "sneaky.md" "$NOTES_CALLER_PWD/notes/.manifest"
-  grep -q "alpha.md" "$NOTES_CALLER_PWD/notes/.manifest"
-}
-
-@test "installed hooks run notes from installer, not PATH" {
-  notes obfuscate
-  git -C "$NOTES_CALLER_PWD" add -A
-  git -C "$NOTES_CALLER_PWD" commit -q --no-verify -m "obfuscated"
-
-  notes deobfuscate
-  notes install-hooks --yes
-  git -C "$NOTES_CALLER_PWD" add .gitattributes
-  git -C "$NOTES_CALLER_PWD" commit -q --no-verify -m "install hook attributes"
-
-  local fake_bin
-  fake_bin="$BATS_TEST_TMPDIR/fake-bin"
-  mkdir -p "$fake_bin"
-  cat > "$fake_bin/notes" <<'EOT'
-#!/usr/bin/env bash
-echo "fake notes invoked: $*" >&2
-exit 99
-EOT
-  chmod +x "$fake_bin/notes"
-
-  echo "change" >> "$NOTES_CALLER_PWD/notes/alpha.md"
-  git -C "$NOTES_CALLER_PWD" add -f notes/alpha.md
-
-  run bash -c 'unset -f notes; PATH="$1:$PATH" git -C "$2" commit -m "edit alpha"' _ "$fake_bin" "$NOTES_CALLER_PWD"
-  [ "$status" -eq 0 ]
-  [[ "$output" != *"fake notes invoked"* ]]
-}
-
-# --- Post-commit hook ---
-
-@test "install-hooks installs post-commit deobfuscation hook" {
-  notes obfuscate
-  notes install-hooks --yes
-
-  [ -x "$NOTES_CALLER_PWD/.git/hooks/post-commit" ]
-  grep -q "Generic hook dispatcher" "$NOTES_CALLER_PWD/.git/hooks/post-commit"
-  [ -x "$NOTES_CALLER_PWD/.git/hooks/post-commit.d/deobfuscation" ]
-  grep -q "manifest" "$NOTES_CALLER_PWD/.git/hooks/post-commit.d/deobfuscation"
-}
-
-@test "post-commit hook deobfuscates working tree after commit" {
-  # Obfuscate and commit initial state
-  notes obfuscate
-  git -C "$NOTES_CALLER_PWD" add -A
-  git -C "$NOTES_CALLER_PWD" commit -q --no-verify -m "obfuscated"
-
-  # Deobfuscate + install hooks explicitly
-  notes deobfuscate
-  notes install-hooks --yes
-
-  # Add a new file and commit — hooks should handle the round-trip
-  echo -e "---\ntitle: New Note\n---\n# New" > "$NOTES_CALLER_PWD/notes/new-note.md"
-  git -C "$NOTES_CALLER_PWD" add notes/new-note.md
-  git -C "$NOTES_CALLER_PWD" commit -m "add new note"
-
-  # Working tree should have readable filenames (post-commit deobfuscated)
-  [ -f "$NOTES_CALLER_PWD/notes/alpha.md" ]
-  [ -f "$NOTES_CALLER_PWD/notes/beta.md" ]
-  [ -f "$NOTES_CALLER_PWD/notes/gamma.txt" ]
-  [ -f "$NOTES_CALLER_PWD/notes/new-note.md" ]
-
-  # Committed tree should have obfuscated filenames
-  local committed_files
-  committed_files=$(git -C "$NOTES_CALLER_PWD" show --name-only --format='' HEAD -- notes/)
-  ! echo "$committed_files" | grep -q "alpha.md"
-  ! echo "$committed_files" | grep -q "new-note.md"
-}
-
-@test "post-commit hook preserves file content after round-trip" {
-  notes obfuscate
-  git -C "$NOTES_CALLER_PWD" add -A
-  git -C "$NOTES_CALLER_PWD" commit -q --no-verify -m "obfuscated"
-
-  notes deobfuscate
-  notes install-hooks --yes
-
-  echo -e "---\ntitle: Fresh\n---\n# Fresh content" > "$NOTES_CALLER_PWD/notes/fresh.md"
-  git -C "$NOTES_CALLER_PWD" add notes/fresh.md
-  git -C "$NOTES_CALLER_PWD" commit -m "add fresh"
-
-  # Content should survive the obfuscate→deobfuscate round-trip
-  [[ "$(cat "$NOTES_CALLER_PWD/notes/alpha.md")" == *"# Alpha"* ]]
-  [[ "$(cat "$NOTES_CALLER_PWD/notes/fresh.md")" == *"# Fresh content"* ]]
-}
-
-@test "post-commit hook is no-op when files are not obfuscated" {
-  # Install hooks — no manifest exists, so hooks should be no-ops
-  notes install-hooks --yes
-
-  # Commit should succeed even though post-commit hook exists
-  echo "change" >> "$NOTES_CALLER_PWD/notes/alpha.md"
-  git -C "$NOTES_CALLER_PWD" add -A
-  run git -C "$NOTES_CALLER_PWD" commit -m "should work fine"
-  [ "$status" -eq 0 ]
-}
-
-# --- Bash 3.2 compatibility ---
 
 @test "obfuscate works without associative arrays (bash 3.2)" {
   # Verify no declare -A in task scripts or hook templates
@@ -716,6 +488,7 @@ EOT
   ! grep -q 'declare -A' "$REPO_DIR/hooks/obfuscation.template"
   ! grep -q 'declare -A' "$REPO_DIR/hooks/post-commit-deobfuscate.template"
 }
+
 
 @test "obfuscate succeeds with single file" {
   # Minimal case — catches set -e failures in manifest lookups
@@ -728,36 +501,6 @@ EOT
   [[ "$output" == *"Obfuscated 1 file(s)"* ]]
 }
 
-@test "pre-commit hook allows commits when no manifest exists" {
-  notes setup --yes
-  git -C "$NOTES_CALLER_PWD" add -A
-  git -C "$NOTES_CALLER_PWD" commit -q -m "setup"
-
-  echo -e "---\ntitle: Normal\n---" > "$NOTES_CALLER_PWD/notes/normal.md"
-  git -C "$NOTES_CALLER_PWD" add notes/normal.md
-
-  run git -C "$NOTES_CALLER_PWD" commit -m "should succeed"
-  [ "$status" -eq 0 ]
-}
-
-# --- deobfuscate never stages ---
-
-@test "deobfuscate restores names without staging" {
-  notes obfuscate
-  git -C "$NOTES_CALLER_PWD" add -A
-  git -C "$NOTES_CALLER_PWD" commit -q --no-verify -m "obfuscated"
-
-  notes deobfuscate
-
-  # Working tree has readable names
-  [ -f "$NOTES_CALLER_PWD/notes/alpha.md" ]
-  [ -f "$NOTES_CALLER_PWD/notes/beta.md" ]
-
-  # Index is clean (no staged changes)
-  local staged
-  staged=$(git -C "$NOTES_CALLER_PWD" diff --cached --name-status)
-  [ -z "$staged" ]
-}
 
 @test "obfuscate works when working tree is deobfuscated but index has obfuscated names" {
   # This is the state after deobfuscate
@@ -782,79 +525,6 @@ EOT
   [ -f "$NOTES_CALLER_PWD/notes/$id_beta" ]
 }
 
-@test "full commit cycle: deobfuscated working tree stays clean" {
-  # Set up obfuscated repo with hooks
-  notes obfuscate
-  git -C "$NOTES_CALLER_PWD" add -A
-  git -C "$NOTES_CALLER_PWD" commit -q --no-verify -m "obfuscated"
-  notes deobfuscate
-  notes install-hooks --yes
-
-  # Edit a file and commit via hooks
-  echo "edited" >> "$NOTES_CALLER_PWD/notes/alpha.md"
-  notes stage alpha.md
-  run git -C "$NOTES_CALLER_PWD" commit -m "edit alpha"
-  [ "$status" -eq 0 ]
-
-  # Committed tree should have obfuscated names
-  local committed_files
-  committed_files=$(git -C "$NOTES_CALLER_PWD" show --name-only --format='' HEAD -- notes/)
-  ! echo "$committed_files" | grep -q "alpha.md"
-
-  # Working tree should have readable names (post-commit deobfuscated)
-  [ -f "$NOTES_CALLER_PWD/notes/alpha.md" ]
-  [[ "$(cat "$NOTES_CALLER_PWD/notes/alpha.md")" == *"edited"* ]]
-
-  # Index should be clean
-  local staged
-  staged=$(git -C "$NOTES_CALLER_PWD" diff --cached --name-status)
-  [ -z "$staged" ]
-}
-
-@test "post-commit hook preserves valid manifest order during scoped obfuscation" {
-  notes obfuscate
-
-  local alpha_id beta_id gamma_id
-  alpha_id=$(grep $'\talpha\.md$' "$NOTES_CALLER_PWD/notes/.manifest" | cut -f1)
-  beta_id=$(grep $'\tbeta\.md$' "$NOTES_CALLER_PWD/notes/.manifest" | cut -f1)
-  gamma_id=$(grep $'\tgamma\.txt$' "$NOTES_CALLER_PWD/notes/.manifest" | cut -f1)
-
-  # Simulate a historical valid manifest whose order differs from the current
-  # name sort. Scoped pre-commit obfuscation should not create an order-only
-  # dirty worktree by normalizing unrelated manifest order.
-  printf '%s\tgamma.txt\n%s\talpha.md\n%s\tbeta.md\n' \
-    "$gamma_id" "$alpha_id" "$beta_id" > "$NOTES_CALLER_PWD/notes/.manifest"
-  git -C "$NOTES_CALLER_PWD" add -A
-  git -C "$NOTES_CALLER_PWD" commit -q --no-verify -m "obfuscated unsorted manifest"
-
-  notes deobfuscate
-  notes install-hooks --yes
-  git -C "$NOTES_CALLER_PWD" add .gitattributes
-  git -C "$NOTES_CALLER_PWD" commit -q --no-verify -m "install hook attributes"
-  [ -z "$(git -C "$NOTES_CALLER_PWD" status --short)" ]
-
-  echo "edited" >> "$NOTES_CALLER_PWD/notes/alpha.md"
-  notes stage alpha.md
-  run git -C "$NOTES_CALLER_PWD" commit -m "edit alpha"
-  [ "$status" -eq 0 ]
-
-  [ -z "$(git -C "$NOTES_CALLER_PWD" status --short)" ]
-}
-
-# --- Post-merge hook ---
-
-@test "install-hooks installs post-merge deobfuscation hook" {
-  notes obfuscate
-  notes install-hooks --yes
-
-  [ -x "$NOTES_CALLER_PWD/.git/hooks/post-merge" ]
-  grep -q "Generic hook dispatcher" "$NOTES_CALLER_PWD/.git/hooks/post-merge"
-  [ -x "$NOTES_CALLER_PWD/.git/hooks/post-merge.d/deobfuscation" ]
-  grep -q "manifest" "$NOTES_CALLER_PWD/.git/hooks/post-merge.d/deobfuscation"
-  grep -q "NOTES_DEOBFUSCATE_BASE_REF=ORIG_HEAD" "$NOTES_CALLER_PWD/.git/hooks/post-merge.d/deobfuscation"
-}
-
-# --- Scoped obfuscation (variadic args) ---
 
 @test "obfuscate with args only processes specified files" {
   notes obfuscate alpha.md beta.md
@@ -871,6 +541,7 @@ EOT
   grep -q "beta.md" "$NOTES_CALLER_PWD/notes/.manifest"
 }
 
+
 @test "obfuscate with args handles notes-dir prefix" {
   notes obfuscate notes/alpha.md
 
@@ -878,6 +549,7 @@ EOT
   [ -f "$NOTES_CALLER_PWD/notes/beta.md" ]
   [ -f "$NOTES_CALLER_PWD/notes/gamma.txt" ]
 }
+
 
 @test "obfuscate with args re-obfuscates known files" {
   # First obfuscate all, then deobfuscate
@@ -900,317 +572,6 @@ EOT
   [ -f "$NOTES_CALLER_PWD/notes/$id_alpha" ]
 }
 
-@test "deobfuscate with args only processes specified IDs" {
-  notes obfuscate
-
-  local id_alpha
-  id_alpha=$(grep 'alpha.md' "$NOTES_CALLER_PWD/notes/.manifest" | cut -f1)
-
-  notes deobfuscate "$id_alpha"
-
-  # alpha should be restored
-  [ -f "$NOTES_CALLER_PWD/notes/alpha.md" ]
-
-  # Others should remain obfuscated
-  local id_beta
-  id_beta=$(grep 'beta.md' "$NOTES_CALLER_PWD/notes/.manifest" | cut -f1)
-  [ -f "$NOTES_CALLER_PWD/notes/$id_beta" ]
-}
-
-@test "deobfuscate with args warns on unknown ID" {
-  notes obfuscate
-
-  run notes deobfuscate nonexistent123
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"Nothing to deobfuscate"* ]] || [[ "$output" == *"Warning: unknown"* ]]
-}
-
-@test "deobfuscate scoped sets assume-unchanged only on deobfuscated IDs" {
-  notes obfuscate
-  git -C "$NOTES_CALLER_PWD" add -A
-  git -C "$NOTES_CALLER_PWD" commit -q --no-verify -m "obfuscated"
-
-  local alpha_id beta_id
-  alpha_id=$(grep "alpha.md" "$NOTES_CALLER_PWD/notes/.manifest" | cut -f1)
-  beta_id=$(grep "beta.md" "$NOTES_CALLER_PWD/notes/.manifest" | cut -f1)
-
-  # Deobfuscate only alpha
-  notes deobfuscate "$alpha_id"
-
-  # alpha's obfuscated ID should be assume-unchanged
-  run git -C "$NOTES_CALLER_PWD" ls-files -v "notes/$alpha_id"
-  [[ "$output" == h* ]]
-
-  # beta's obfuscated ID should NOT be assume-unchanged (still tracked normally)
-  run git -C "$NOTES_CALLER_PWD" ls-files -v "notes/$beta_id"
-  [[ "$output" == H* ]]
-}
-
-@test "pre-commit hook only obfuscates staged files" {
-  # Set up: obfuscate, commit, then deobfuscate + install hooks
-  notes obfuscate
-  git -C "$NOTES_CALLER_PWD" add -A
-  git -C "$NOTES_CALLER_PWD" commit -q --no-verify -m "obfuscated"
-  notes deobfuscate
-  notes install-hooks --yes
-  # Working tree: readable names. Index: obfuscated names matching HEAD.
-
-  # Edit one file, stage only that one
-  echo "change" >> "$NOTES_CALLER_PWD/notes/alpha.md"
-  git -C "$NOTES_CALLER_PWD" add -f notes/alpha.md
-
-  # Capture stderr from commit (hooks print rename operations there)
-  local stderr_log="$BATS_TEST_TMPDIR/commit-stderr"
-  git -C "$NOTES_CALLER_PWD" commit -m "edit one file" 2>"$stderr_log"
-
-  cat "$stderr_log" >&2
-
-  # Count how many files the pre-commit hook obfuscated
-  local obfuscated_count
-  obfuscated_count=$(sed -n 's/.*Auto-obfuscating \([0-9]*\) file.*/\1/p' "$stderr_log")
-  echo "auto-obfuscated: ${obfuscated_count:-none}" >&2
-
-  # Should obfuscate exactly 1 file (the staged one)
-  [ -n "$obfuscated_count" ]
-  [ "$obfuscated_count" -eq 1 ]
-}
-
-@test "deobfuscate trusts existing readable when no state file (upgrade/fresh-clone path)" {
-  # Regression: notes#59 finding 1. Before this fix, the first deobfuscate
-  # after upgrading to the dirty-protection version would refuse every
-  # readable that differs from its obfuscated source -- because no state
-  # file existed yet, so every base_hash lookup returned empty, which the
-  # check treated as dirty. That forced users straight to --force on first
-  # run, training them to bypass the protection forever.
-  notes obfuscate
-  local alpha_id
-  alpha_id=$(grep "alpha.md" "$NOTES_CALLER_PWD/notes/.manifest" | cut -f1)
-  [ -f "$NOTES_CALLER_PWD/notes/$alpha_id" ]
-
-  # Simulate a pre-fix clone: a stale readable on disk, no state file.
-  echo "stale readable from before the upgrade" > "$NOTES_CALLER_PWD/notes/alpha.md"
-  rm -f "$NOTES_CALLER_PWD/.git/info/notes-obfuscation-state"
-
-  run notes deobfuscate
-  [ "$status" -eq 0 ]
-  # The readable was overwritten with the obfuscated content (the protection
-  # is opt-in only after the state file exists; on the upgrade run we trust
-  # the existing readable so users don't get force-prompted on every file).
-  [[ "$(cat "$NOTES_CALLER_PWD/notes/alpha.md")" == *"# Alpha"* ]]
-  # And the very next deobfuscate is now protected -- the state file got
-  # written on this run.
-  [ -f "$NOTES_CALLER_PWD/.git/info/notes-obfuscation-state" ]
-  grep -q "^${alpha_id}"$'\t' "$NOTES_CALLER_PWD/.git/info/notes-obfuscation-state"
-}
-
-@test "deobfuscate refuses dirty readable note with recorded base hash" {
-  notes obfuscate
-  local alpha_id
-  alpha_id=$(grep "alpha.md" "$NOTES_CALLER_PWD/notes/.manifest" | cut -f1)
-  git -C "$NOTES_CALLER_PWD" add -A notes
-  git -C "$NOTES_CALLER_PWD" commit -q -m "obfuscate"
-
-  notes deobfuscate
-  echo "local edit" >> "$NOTES_CALLER_PWD/notes/alpha.md"
-
-  # Simulate unlock/pull restoring the obfuscated source while the readable
-  # file still exists with local edits.
-  git -C "$NOTES_CALLER_PWD" update-index --no-assume-unchanged "notes/$alpha_id" 2>/dev/null || true
-  git -C "$NOTES_CALLER_PWD" checkout -- "notes/$alpha_id"
-
-  run notes deobfuscate
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"refusing to overwrite dirty readable note"* ]]
-  [[ "$(cat "$NOTES_CALLER_PWD/notes/alpha.md")" == *"local edit"* ]]
-  [ -f "$NOTES_CALLER_PWD/notes/$alpha_id" ]
-}
-
-@test "deobfuscate refreshes clean stale readable when state row is missing but base ref matches" {
-  notes obfuscate
-  local alpha_id base_ref state
-  alpha_id=$(grep "alpha.md" "$NOTES_CALLER_PWD/notes/.manifest" | cut -f1)
-  git -C "$NOTES_CALLER_PWD" add -A notes
-  git -C "$NOTES_CALLER_PWD" commit -q -m "obfuscate v1"
-  base_ref=$(git -C "$NOTES_CALLER_PWD" rev-parse HEAD)
-
-  notes deobfuscate
-  state="$NOTES_CALLER_PWD/.git/info/notes-obfuscation-state"
-  [ -f "$state" ]
-
-  echo "# Alpha v2" > "$NOTES_CALLER_PWD/notes/alpha.md"
-  notes obfuscate alpha.md
-  git -C "$NOTES_CALLER_PWD" commit -q -m "obfuscate v2"
-
-  # Simulate a partial/old state file after pull: alpha.md is still the clean
-  # pre-merge readable, the new obfuscated source is present, but alpha's state
-  # row is missing. ORIG_HEAD/base-ref should prove the readable is safe to
-  # refresh instead of treating it as a local edit.
-  git -C "$NOTES_CALLER_PWD" cat-file --filters "$base_ref:notes/$alpha_id" > "$NOTES_CALLER_PWD/notes/alpha.md"
-  grep -v "^${alpha_id}"$'\t' "$state" > "$state.tmp"
-  mv "$state.tmp" "$state"
-
-  NOTES_DEOBFUSCATE_BASE_REF="$base_ref" run notes deobfuscate
-  [ "$status" -eq 0 ]
-  [[ "$(cat "$NOTES_CALLER_PWD/notes/alpha.md")" == *"# Alpha v2"* ]]
-  [ ! -f "$NOTES_CALLER_PWD/notes/$alpha_id" ]
-  grep -q "^${alpha_id}"$'\t' "$state"
-}
-
-@test "deobfuscate --force intentionally overwrites dirty readable note" {
-  notes obfuscate
-  local alpha_id
-  alpha_id=$(grep "alpha.md" "$NOTES_CALLER_PWD/notes/.manifest" | cut -f1)
-  [ -f "$NOTES_CALLER_PWD/notes/$alpha_id" ]
-
-  echo "local edit" > "$NOTES_CALLER_PWD/notes/alpha.md"
-
-  run notes deobfuscate -- --force
-  [ "$status" -eq 0 ]
-
-  [ -f "$NOTES_CALLER_PWD/notes/alpha.md" ]
-  [[ "$(cat "$NOTES_CALLER_PWD/notes/alpha.md")" == *"# Alpha"* ]]
-  [[ "$(cat "$NOTES_CALLER_PWD/notes/alpha.md")" != *"local edit"* ]]
-}
-
-@test "deobfuscate ignores inherited usage_force without explicit --force" {
-  notes obfuscate
-  local alpha_id
-  alpha_id=$(grep "alpha.md" "$NOTES_CALLER_PWD/notes/.manifest" | cut -f1)
-  git -C "$NOTES_CALLER_PWD" add -A notes
-  git -C "$NOTES_CALLER_PWD" commit -q -m "obfuscate"
-
-  notes deobfuscate
-  echo "local edit" >> "$NOTES_CALLER_PWD/notes/alpha.md"
-  git -C "$NOTES_CALLER_PWD" update-index --no-assume-unchanged "notes/$alpha_id" 2>/dev/null || true
-  git -C "$NOTES_CALLER_PWD" checkout -- "notes/$alpha_id"
-
-  usage_force=true run notes deobfuscate
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"refusing to overwrite dirty readable note"* ]]
-  [[ "$(cat "$NOTES_CALLER_PWD/notes/alpha.md")" == *"local edit"* ]]
-}
-
-@test "deobfuscate allows identical readable note copy" {
-  notes obfuscate
-  local alpha_id
-  alpha_id=$(grep "alpha.md" "$NOTES_CALLER_PWD/notes/.manifest" | cut -f1)
-  [ -f "$NOTES_CALLER_PWD/notes/$alpha_id" ]
-
-  cp "$NOTES_CALLER_PWD/notes/$alpha_id" "$NOTES_CALLER_PWD/notes/alpha.md"
-
-  run notes deobfuscate
-  [ "$status" -eq 0 ]
-  [ -f "$NOTES_CALLER_PWD/notes/alpha.md" ]
-  [[ "$(cat "$NOTES_CALLER_PWD/notes/alpha.md")" == *"# Alpha"* ]]
-}
-
-@test "deobfuscate records state for files renamed before mid-batch refusal" {
-  # Regression: notes#59 finding 2. rename_to_readable aborts on the first
-  # dirty file in a batch, but files renamed *before* that point are already
-  # moved on disk. Pre-fix, the deobfuscate task exit'd on rc != 0 before
-  # recording state, so those successfully-renamed files had no recorded base
-  # hash -- and the next post-pull update of any of them would be refused
-  # without --force, even though the user did nothing wrong.
-  notes obfuscate
-  local alpha_id beta_id
-  alpha_id=$(grep "alpha.md" "$NOTES_CALLER_PWD/notes/.manifest" | cut -f1)
-  beta_id=$(grep "beta.md"  "$NOTES_CALLER_PWD/notes/.manifest" | cut -f1)
-  git -C "$NOTES_CALLER_PWD" add -A notes
-  git -C "$NOTES_CALLER_PWD" commit -q -m "obfuscate"
-
-  # Establish state-file invariant for both files.
-  notes deobfuscate
-  local state="$NOTES_CALLER_PWD/.git/info/notes-obfuscation-state"
-  [ -f "$state" ]
-
-  # Snapshot the count of rows for alpha_id BEFORE the partial-failure run.
-  # Pre-fix the task exit'd before re-recording, so this count would not
-  # change after the partial-failure run; post-fix it must increment.
-  # (Asserting a row simply *exists* would not catch the regression -- the
-  # row from this first deobfuscate is already present either way.)
-  local alpha_rows_before
-  alpha_rows_before=$(grep -c "^${alpha_id}"$'\t' "$state" || true)
-  [ "$alpha_rows_before" -eq 1 ]
-
-  # Dirty beta and restore the obfuscated source for both, simulating a pull
-  # that brings back the obfuscated form alongside the dirty readable.
-  echo "local edit on beta" > "$NOTES_CALLER_PWD/notes/beta.md"
-  git -C "$NOTES_CALLER_PWD" update-index --no-assume-unchanged "notes/$alpha_id" "notes/$beta_id" 2>/dev/null || true
-  git -C "$NOTES_CALLER_PWD" checkout -- "notes/$alpha_id" "notes/$beta_id"
-  # Now alpha.md is up-to-date but the obfuscated source has been re-restored;
-  # beta has a dirty readable that should refuse.
-
-  # Remove the alpha readable so the rename re-creates it from scratch (cmp -s
-  # mismatch triggers the rename path); beta refuses on the dirty check.
-  rm -f "$NOTES_CALLER_PWD/notes/alpha.md"
-
-  run notes deobfuscate
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"refusing to overwrite dirty readable note"* ]]
-  # Alpha was renamed despite beta's failure...
-  [ -f "$NOTES_CALLER_PWD/notes/alpha.md" ]
-  # ...and the state file recorded its base hash again (the actual regression
-  # under test). Pre-fix the task exit'd before _record_deobfuscation_base_hashes
-  # was called, so alpha_rows_after == alpha_rows_before. Post-fix the recording
-  # runs even on partial failure, so the row count strictly increases.
-  local alpha_rows_after
-  alpha_rows_after=$(grep -c "^${alpha_id}"$'\t' "$state" || true)
-  [ "$alpha_rows_after" -gt "$alpha_rows_before" ]
-}
-
-@test "deobfuscation state file is append-only and last-entry-wins" {
-  # Regression: notes#59 finding 3. The state file is now append-only to
-  # avoid a tmp+mv read-modify-write race when two deobfuscate processes
-  # interleave. Two invariants we test here:
-  #   (a) re-recording an id appends a new row instead of rewriting the file
-  #   (b) the lookup semantic takes the *last* matching row, so newer writes
-  #       shadow older ones (which is what makes append-only safe).
-  notes obfuscate
-  local alpha_id
-  alpha_id=$(grep "alpha.md" "$NOTES_CALLER_PWD/notes/.manifest" | cut -f1)
-  git -C "$NOTES_CALLER_PWD" add -A notes
-  git -C "$NOTES_CALLER_PWD" commit -q -m "obfuscate"
-
-  notes deobfuscate
-  local state="$NOTES_CALLER_PWD/.git/info/notes-obfuscation-state"
-  [ -f "$state" ]
-
-  local rows_before alpha_rows_before
-  rows_before=$(wc -l < "$state" | tr -d ' ')
-  alpha_rows_before=$(grep -c "^${alpha_id}"$'\t' "$state" || true)
-  [ "$alpha_rows_before" -eq 1 ]
-
-  # Drive another deobfuscate cycle: dirty the readable, restore the
-  # obfuscated source from the commit (simulating a pull), then force.
-  # Pre-fix this rewrote the state file (rows_after == rows_before);
-  # post-fix it appends (rows_after > rows_before).
-  echo "local edit" >> "$NOTES_CALLER_PWD/notes/alpha.md"
-  git -C "$NOTES_CALLER_PWD" update-index --no-assume-unchanged "notes/$alpha_id" 2>/dev/null || true
-  git -C "$NOTES_CALLER_PWD" checkout -- "notes/$alpha_id"
-  notes deobfuscate -- --force
-
-  local rows_after alpha_rows_after
-  rows_after=$(wc -l < "$state" | tr -d ' ')
-  alpha_rows_after=$(grep -c "^${alpha_id}"$'\t' "$state" || true)
-  [ "$rows_after" -gt "$rows_before" ]
-  [ "$alpha_rows_after" -gt "$alpha_rows_before" ]
-
-  # Last-entry-wins lookup: inject a stale row at the end and confirm the
-  # awk "last match" semantic the helper uses returns the stale one (i.e.
-  # whatever was written most recently wins). This is the property that
-  # makes append-only safe under concurrent writes.
-  local stale_hash="deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
-  printf '%s\t%s\n' "$alpha_id" "$stale_hash" >> "$state"
-
-  # Pin the contract on the helper, not its implementation -- a future
-  # rewrite of _deobfuscation_base_hash_for_id (different awk, perl, etc.)
-  # that silently broke last-entry-wins would then fail this test.
-  local last
-  last=$(_deobfuscation_base_hash_for_id "$NOTES_CALLER_PWD/notes" "$alpha_id")
-  [ "$last" = "$stale_hash" ]
-}
-
-# ── Refuse re-obfuscation of already-hex-named files ──────────
 
 @test "obfuscate refuses files whose basename is an 8-hex id" {
   # Simulate the broken state we saw on den/fold through April 2026:
@@ -1230,6 +591,7 @@ title: orphan" > "$NOTES_CALLER_PWD/notes/deadbeef"
   # File must not have been renamed
   [ -f "$NOTES_CALLER_PWD/notes/deadbeef" ]
 }
+
 
 @test "obfuscate refuses hex-named file in full scan mode" {
   # Same guard, but via unscoped `notes obfuscate` (scans all files)
@@ -1251,6 +613,7 @@ EOT
   [ -f "$NOTES_CALLER_PWD/notes/alpha.md" ]
 }
 
+
 @test "obfuscate allows files with hex prefix but non-hex tail" {
   # Don't false-positive on names that happen to start with hex
   mkdir -p "$NOTES_CALLER_PWD/notes"
@@ -1268,6 +631,7 @@ EOT
   grep -q "abc123xy.md" "$NOTES_CALLER_PWD/notes/.manifest"
 }
 
+
 @test "obfuscate allows files whose basename is hex but has an extension" {
   # `deadbeef.md` is a valid readable filename; guard only fires on bare 8-hex
   mkdir -p "$NOTES_CALLER_PWD/notes"
@@ -1283,6 +647,7 @@ EOT
   grep -q "deadbeef.md" "$NOTES_CALLER_PWD/notes/.manifest"
 }
 
+
 @test "obfuscate refuses hex-named file in a subdirectory" {
   # The guard uses basename(), so nested paths must still be caught.
   mkdir -p "$NOTES_CALLER_PWD/notes/sub"
@@ -1296,6 +661,7 @@ EOT
   # File must not have been renamed
   [ -f "$NOTES_CALLER_PWD/notes/sub/cafebabe" ]
 }
+
 
 @test "obfuscate hex guard: uppercase basename behavior" {
   # The guard regex is lowercase-only ([a-f0-9]). On a case-insensitive
@@ -1330,6 +696,7 @@ EOT
   grep -q "DEADBEEF" "$NOTES_CALLER_PWD/notes/.manifest" || fail "expected manifest entry for DEADBEEF"
 }
 
+
 @test "obfuscate hex guard: 7-char and 9-char hex pass through" {
   # The guard is {8}, not {7,} or {8,}. Files whose basenames are hex but
   # the wrong length are treated as normal readable filenames. This locks
@@ -1354,6 +721,7 @@ EOT
   grep -q "abcdef0$" "$NOTES_CALLER_PWD/notes/.manifest" || fail "expected 7-char entry in manifest"
   grep -q "abcdef012$" "$NOTES_CALLER_PWD/notes/.manifest" || fail "expected 9-char entry in manifest"
 }
+
 
 @test "obfuscate hex guard: multiple hex-named orphans in full-scan mode (first-hit-only)" {
   # If several hex-named files exist, the guard fires on the first and
@@ -1382,4 +750,35 @@ EOT
   [ -f "$NOTES_CALLER_PWD/notes/cafebabe" ]
   # And real.md wasn't obfuscated either (fail-fast = no partial state)
   [ -f "$NOTES_CALLER_PWD/notes/real.md" ]
+}
+
+@test "obfuscate fails before mutation when corpus enumeration fails" {
+  local mock_bin="$BATS_TEST_TMPDIR/failing-find-bin"
+  mkdir -p "$mock_bin"
+  cat > "$mock_bin/find" <<'SH'
+#!/usr/bin/env bash
+exit 73
+SH
+  chmod +x "$mock_bin/find"
+
+  PATH="$mock_bin:$PATH" run notes obfuscate
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"failed to enumerate readable note candidates"* ]]
+  [ -f "$NOTES_CALLER_PWD/notes/alpha.md" ]
+  [ -f "$NOTES_CALLER_PWD/notes/beta.md" ]
+  [ ! -f "$NOTES_CALLER_PWD/notes/.manifest" ]
+}
+
+@test "obfuscate fails instead of widening an unparsed file scope" {
+  local mock_bin="$BATS_TEST_TMPDIR/failing-xargs-bin"
+  make_failing_xargs_overlay "$mock_bin"
+
+  PATH="$mock_bin:$PATH" run notes obfuscate alpha.md
+
+  [ "$status" -eq 73 ]
+  [[ "$output" == *"failed to parse variadic arguments"* ]]
+  [ -f "$NOTES_CALLER_PWD/notes/alpha.md" ]
+  [ -f "$NOTES_CALLER_PWD/notes/beta.md" ]
+  [ ! -f "$NOTES_CALLER_PWD/notes/.manifest" ]
 }

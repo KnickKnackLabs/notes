@@ -61,6 +61,16 @@ EOF
   [[ "$output" != *"Stale Repo"* ]]
 }
 
+@test "test harness supplies deterministic Git identity without ambient config" {
+  run git config --get user.name
+  [ "$status" -eq 0 ]
+  [ "$output" = "Notes tests" ]
+
+  run git config --get user.email
+  [ "$status" -eq 0 ]
+  [ "$output" = "notes-tests@example.invalid" ]
+}
+
 # ── Confirmation helpers ─────────────────────────────────────
 
 @test "confirm_destructive accepts --yes flag" {
@@ -162,4 +172,81 @@ EOF
   run manifest_name_for_id "$MANIFEST" "ffffffff"
   [ "$status" -eq 0 ]
   [ -z "$output" ]
+}
+
+@test "detect_double_tracked_notes inspects tracked paths in one Git process" {
+  local i=1 id name real_git counter_bin calls
+  git -C "$NOTES_CALLER_PWD" init -q
+
+  while [ "$i" -le 42 ]; do
+    id=$(printf '%08d' "$i")
+    name=$(printf 'note-%02d.md' "$i")
+    printf '%s\t%s\n' "$id" "$name" >> "$MANIFEST"
+    printf '# Note %02d\n' "$i" > "$NOTES_CALLER_PWD/notes/$id"
+    i=$((i + 1))
+  done
+  git -C "$NOTES_CALLER_PWD" add notes
+  git -C "$NOTES_CALLER_PWD" commit -q -m "obfuscated notes"
+  printf '# Tracked readable\n' > "$NOTES_CALLER_PWD/notes/note-17.md"
+  git -C "$NOTES_CALLER_PWD" add -f notes/note-17.md
+
+  counter_bin="$BATS_TEST_TMPDIR/counter-bin"
+  calls="$BATS_TEST_TMPDIR/git.calls"
+  real_git=$(command -v git)
+  mkdir -p "$counter_bin"
+  cat > "$counter_bin/git" <<SH
+#!/usr/bin/env bash
+printf '1\\n' >> '$calls'
+exec '$real_git' "\$@"
+SH
+  chmod +x "$counter_bin/git"
+
+  PATH="$counter_bin:$PATH" run detect_double_tracked_notes "$NOTES_CALLER_PWD" notes
+
+  [ "$status" -eq 0 ]
+  [ "$output" = $'00000017\tnote-17.md' ]
+  [ "$(wc -l < "$calls" | tr -d ' ')" -eq 1 ]
+}
+
+@test "detect_double_tracked_notes matches Git-quoted readable paths literally" {
+  local backslash_name='back\slash.md'
+  local quote_name='double"quote.md'
+  git -C "$NOTES_CALLER_PWD" init -q
+
+  printf 'abc12345\t%s\ndef67890\t%s\n' "$backslash_name" "$quote_name" > "$MANIFEST"
+  printf '# Obfuscated\n' > "$NOTES_CALLER_PWD/notes/abc12345"
+  printf '# Obfuscated\n' > "$NOTES_CALLER_PWD/notes/def67890"
+  printf '# Readable\n' > "$NOTES_CALLER_PWD/notes/$backslash_name"
+  printf '# Readable\n' > "$NOTES_CALLER_PWD/notes/$quote_name"
+  git -C "$NOTES_CALLER_PWD" add -f notes
+
+  run detect_double_tracked_notes "$NOTES_CALLER_PWD" notes
+
+  [ "$status" -eq 0 ]
+  [ "$output" = $'abc12345\tback\\slash.md\ndef67890\tdouble"quote.md' ]
+}
+
+@test "parse_variadic_args preserves quoted argument boundaries" {
+  run parse_variadic_args "'alpha one.md' beta.md"
+
+  [ "$status" -eq 0 ]
+  [ "$output" = $'alpha one.md\nbeta.md' ]
+}
+
+@test "parse_variadic_args propagates parser failure" {
+  local mock_bin="$BATS_TEST_TMPDIR/failing-xargs-bin"
+  make_failing_xargs_overlay "$mock_bin"
+
+  PATH="$mock_bin:$PATH" run parse_variadic_args "alpha.md"
+
+  [ "$status" -eq 73 ]
+  [[ "$output" == *"failed to parse variadic arguments"* ]]
+}
+
+@test "variadic task arguments use the checked shared parser" {
+  local task
+  for task in changes commit deobfuscate diff obfuscate setup stage test; do
+    grep -q 'parse_variadic_args' "$REPO_DIR/.mise/tasks/$task"
+    ! grep -Eq 'done < <\(.*xargs' "$REPO_DIR/.mise/tasks/$task"
+  done
 }

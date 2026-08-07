@@ -9,6 +9,7 @@
 set -euo pipefail
 
 REPO_DIR="${MISE_CONFIG_ROOT:?MISE_CONFIG_ROOT not set}"
+source "$REPO_DIR/lib/readable-state.sh"
 TARGET_DIR="${NOTES_CALLER_PWD:-.}"
 notes_dir="$TARGET_DIR/${usage_dir:-notes}"
 
@@ -16,10 +17,10 @@ if [ ! -d "$notes_dir" ]; then
   echo "Error: notes directory not found: $notes_dir" >&2
   exit 1
 fi
+require_readable_notes_state "$notes_dir"
 
 python3 - "$REPO_DIR" "$notes_dir" "${usage_json:-false}" "${usage_recent:-}" "${usage_tag:-}" "${usage_type:-}" "${usage_status:-}" <<'PY'
 import json
-import subprocess
 import sys
 from pathlib import Path
 
@@ -33,6 +34,7 @@ status_filter = sys.argv[7]
 
 sys.path.insert(0, str(repo_dir / "lib"))
 from frontmatter import filter_notes, iter_notes  # noqa: E402
+from table_output import print_table  # noqa: E402
 
 rows = [
     note.row()
@@ -67,13 +69,17 @@ elif not rows:
     else:
         print("No notes found.")
 else:
-    table = "Title\tType\tStatus\tTags\tUpdated\n" + "\n".join(
-        f"{row['title']}\t{row['type']}\t{row['status']}\t{', '.join(row['tags'])}\t{row['date']}" for row in rows
-    )
-    subprocess.run(
-        ["gum", "table", "--print", "--separator", "\t"],
-        input=table,
-        text=True,
-        check=True,
+    print_table(
+        ["Title", "Type", "Status", "Tags", "Updated"],
+        [
+            [
+                row["title"],
+                row["type"],
+                row["status"],
+                ", ".join(row["tags"]),
+                row["date"],
+            ]
+            for row in rows
+        ],
     )
 PY
