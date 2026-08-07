@@ -19,30 +19,10 @@ notes_dir = target_dir / os.environ.get("usage_dir", "notes")
 selector = os.environ.get("usage_note", "")
 
 sys.path.insert(0, str(repo_dir / "lib"))
-# note_components is a repo-local import loaded from MISE_CONFIG_ROOT/lib, not
-# a uv dependency.
+# These are repo-local imports loaded from MISE_CONFIG_ROOT/lib, not uv
+# dependencies.
 from note_components import read_note_components  # noqa: E402
-
-
-def existing_path_candidates(selector: str) -> list[Path]:
-    raw = Path(selector).expanduser()
-    candidates: list[Path] = []
-    if raw.is_absolute():
-        candidates.append(raw)
-    else:
-        candidates.extend([target_dir / raw, notes_dir / raw])
-        if raw.suffix != ".md":
-            candidates.extend([target_dir / f"{selector}.md", notes_dir / f"{selector}.md"])
-
-    seen: set[str] = set()
-    unique: list[Path] = []
-    for candidate in candidates:
-        resolved = candidate.resolve() if candidate.exists() else candidate
-        key = str(resolved)
-        if key not in seen:
-            unique.append(candidate)
-            seen.add(key)
-    return unique
+from note_selection import resolve_note_path  # noqa: E402
 
 
 def main() -> int:
@@ -53,12 +33,9 @@ def main() -> int:
     if readable.returncode != 0:
         return readable.returncode
 
-    note_path = None
-    for candidate in existing_path_candidates(selector):
-        if candidate.is_file():
-            note_path = candidate
-            break
-
+    note_path = resolve_note_path(
+        selector, target_dir=target_dir, notes_dir=notes_dir
+    )
     if note_path is None:
         print(f"Error: note not found: {selector}", file=sys.stderr)
         return 1

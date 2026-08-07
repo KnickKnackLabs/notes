@@ -1,9 +1,9 @@
 #!/usr/bin/env -S uv run --script
-#MISE description="Read a note's visible body, stripping frontmatter by default"
+#MISE description="Read a note's body, stripping frontmatter by default"
 #USAGE arg "<note>" help="Note path or slug" required=#true
 #USAGE flag "--dir <dir>" help="Notes directory relative to repo root" default="notes"
-#USAGE flag "--json" help="Output parsed components as JSON" default=#false
-#USAGE flag "--with-frontmatter" help="Include frontmatter in plain text output" default=#false
+#USAGE flag "--json" help="Output parsed frontmatter and body as JSON" default=#false
+#USAGE flag "--with-frontmatter" help="Preserve frontmatter in plain text output" default=#false
 # /// script
 # dependencies = []
 # ///
@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -22,39 +23,21 @@ want_json = os.environ.get("usage_json", "false") == "true"
 want_frontmatter = os.environ.get("usage_with_frontmatter", "false") == "true"
 
 sys.path.insert(0, str(repo_dir / "lib"))
-# note_components is a repo-local import loaded from MISE_CONFIG_ROOT/lib, not
-# a uv dependency.
 from note_components import read_note_components  # noqa: E402
-
-
-def existing_path_candidates(selector: str) -> list[Path]:
-    raw = Path(selector).expanduser()
-    candidates: list[Path] = []
-    if raw.is_absolute():
-        candidates.append(raw)
-    else:
-        candidates.extend([target_dir / raw, notes_dir / raw])
-        if raw.suffix != ".md":
-            candidates.extend([target_dir / f"{selector}.md", notes_dir / f"{selector}.md"])
-
-    seen: set[str] = set()
-    unique: list[Path] = []
-    for candidate in candidates:
-        resolved = candidate.resolve() if candidate.exists() else candidate
-        key = str(resolved)
-        if key not in seen:
-            unique.append(candidate)
-            seen.add(key)
-    return unique
+from note_selection import resolve_note_path  # noqa: E402
 
 
 def main() -> int:
-    note_path = None
-    for candidate in existing_path_candidates(selector):
-        if candidate.is_file():
-            note_path = candidate
-            break
+    readable = subprocess.run(
+        [str(repo_dir / "lib" / "readable-state.sh"), "require", str(notes_dir)],
+        check=False,
+    )
+    if readable.returncode != 0:
+        return readable.returncode
 
+    note_path = resolve_note_path(
+        selector, target_dir=target_dir, notes_dir=notes_dir
+    )
     if note_path is None:
         print(f"Error: note not found: {selector}", file=sys.stderr)
         return 1
@@ -67,28 +50,10 @@ def main() -> int:
 
     if want_json:
         print(json.dumps(parsed.to_json(), indent=2, ensure_ascii=False))
-        return 0
-
-    # Plain text output: return visible body by default.
-    if want_frontmatter and parsed.frontmatter is not None:
-        # Reconstruct frontmatter block and prepend to body.
-        frontmatter_lines = ["---"]
-        for key, value in parsed.frontmatter.items():
-            if isinstance(value, list):
-                # Serialize lists as block list items (the shape notes new writes).
-                frontmatter_lines.append(f"{key}:")
-                for item in value:
-                    frontmatter_lines.append(f"  - {item}")
-            else:
-                frontmatter_lines.append(f"{key}: {value}")
-        frontmatter_lines.append("---")
-        print("\n".join(frontmatter_lines))
-        if parsed.body:
-            print()
-            print(parsed.body, end="")
+    elif want_frontmatter:
+        print(parsed.source, end="")
     else:
         print(parsed.body, end="")
-
     return 0
 
 

@@ -3,214 +3,136 @@
 load test_helper
 
 setup() {
-  export NOTES_CALLER_PWD="$BATS_TEST_TMPDIR"
+  export NOTES_CALLER_PWD="$BATS_TEST_TMPDIR/repo"
   mkdir -p "$NOTES_CALLER_PWD/notes"
 }
 
-# Override the notes() wrapper to call the read task directly via uv,
-# bypassing the mise toolchain which has a pre-existing rudi install issue.
-# In CI, this workaround is unnecessary — mise tasks work correctly there.
-# The hardcoded uv path matches the mise.toml uv pin (0.11.19).
-notes_read() {
-  local selector="" dir="notes" json="false" with_frontmatter="false"
-  while [ $# -gt 0 ]; do
-    case "$1" in
-      --dir) dir="$2"; shift 2 ;;
-      --json) json="true"; shift ;;
-      --with-frontmatter) with_frontmatter="true"; shift ;;
-      *) selector="$1"; shift ;;
-    esac
-  done
-  cd "$REPO_DIR" && MISE_CONFIG_ROOT="$REPO_DIR" NOTES_CALLER_PWD="$NOTES_CALLER_PWD" \
-    usage_note="$selector" usage_dir="$dir" usage_json="$json" usage_with_frontmatter="$with_frontmatter" \
-    /home/knickknacklabs/.local/share/mise/installs/uv/0.11.19/uv-x86_64-unknown-linux-musl/uv \
-    run --script .mise/tasks/read
-}
-export -f notes_read
-
-save_read_output() {
-  read_output="$BATS_TEST_TMPDIR/read-output.txt"
-  printf '%s\n' "$output" > "$read_output"
-}
-
-@test "read returns visible body for a plain Markdown note" {
-  cat > "$NOTES_CALLER_PWD/notes/plain.md" <<'EOF'
-# Plain Note
+@test "read returns a plain note unchanged" {
+  local note="$NOTES_CALLER_PWD/notes/plain.md"
+  local actual="$BATS_TEST_TMPDIR/actual.md"
+  cat > "$note" <<'EOF'
+# Plain note
 
 Visible body.
 EOF
 
-  run notes_read notes/plain.md
-  [ "$status" -eq 0 ]
-  [ "$output" = "# Plain Note"$'\n\n'"Visible body." ]
+  notes read plain > "$actual"
+
+  cmp "$note" "$actual"
 }
 
-@test "read strips frontmatter from the visible body" {
-  cat > "$NOTES_CALLER_PWD/notes/frontmatter.md" <<'EOF'
+@test "read strips only frontmatter and preserves the remaining source" {
+  local note="$NOTES_CALLER_PWD/notes/frontmatter.md"
+  local expected="$BATS_TEST_TMPDIR/expected.md"
+  local actual="$BATS_TEST_TMPDIR/actual.md"
+  cat > "$expected" <<'EOF'
+# Frontmatter note
+
+Visible body.
+
+<!-- NOTE-BANKNOTE-BEGIN name=maintenance
+Keep this proposed tail block byte-for-byte.
+NOTE-BANKNOTE-END -->
+EOF
+  {
+    cat <<'EOF'
 ---
-title: Frontmatter Note
+title: Frontmatter note
+tags: [testing, read]
+---
+EOF
+    cat "$expected"
+  } > "$note"
+
+  notes read frontmatter > "$actual"
+
+  cmp "$expected" "$actual"
+}
+
+@test "read --with-frontmatter preserves the exact source" {
+  local note="$NOTES_CALLER_PWD/notes/styled.md"
+  local actual="$BATS_TEST_TMPDIR/actual.md"
+  cat > "$note" <<'EOF'
+---
+# Keep this comment.
+title: "Quoted: title"
+tags: ["one", 'two']
+---
+# Styled note
+EOF
+
+  notes read styled --with-frontmatter > "$actual"
+
+  cmp "$note" "$actual"
+}
+
+@test "read --json exposes parsed frontmatter and body" {
+  local json="$BATS_TEST_TMPDIR/read.json"
+  cat > "$NOTES_CALLER_PWD/notes/json.md" <<'EOF'
+---
+title: JSON note
 tags:
   - testing
-  - read
 ---
-# Frontmatter Note
-
-Visible body.
+# JSON note
 EOF
 
-  run notes_read frontmatter
-  [ "$status" -eq 0 ]
-  [[ "$output" == "# Frontmatter Note"* ]]
-  [[ "$output" != "---"* ]]
-  [[ "$output" == *"Visible body." ]]
-}
+  notes read json --json > "$json"
 
-@test "read --with-frontmatter includes frontmatter in output" {
-  cat > "$NOTES_CALLER_PWD/notes/frontmatter.md" <<'EOF'
----
-title: Frontmatter Note
-tags:
-  - testing
-  - read
----
-# Frontmatter Note
-
-Visible body.
-EOF
-
-  run notes_read frontmatter --with-frontmatter
-  [ "$status" -eq 0 ]
-  [[ "$output" == "---"* ]]
-  [[ "$output" == *"title: Frontmatter Note"* ]]
-  [[ "$output" == *"# Frontmatter Note"* ]]
-}
-
-@test "read --json outputs parsed components" {
-  cat > "$NOTES_CALLER_PWD/notes/json-test.md" <<'EOF'
----
-title: JSON Test
----
-# JSON Test
-
-Visible body.
-EOF
-
-  run notes_read json-test --json
-  [ "$status" -eq 0 ]
-
-  save_read_output
-  JSON_PATH="$read_output" python3 <<'PY'
+  JSON_PATH="$json" python3 <<'PY'
 import json
 import os
 from pathlib import Path
 
-with Path(os.environ["JSON_PATH"]).open(encoding="utf-8") as handle:
-    data = json.load(handle)
-
-assert data["frontmatter"]["title"] == "JSON Test"
-assert data["frontmatter_present"] is True
-assert data["body"] == "# JSON Test\n\nVisible body.\n"
-assert data["diagnostics"] == []
-assert set(data) == {"path", "frontmatter", "frontmatter_present", "body", "diagnostics"}
+payload = json.loads(Path(os.environ["JSON_PATH"]).read_text(encoding="utf-8"))
+assert payload["frontmatter"] == {"title": "JSON note", "tags": ["testing"]}
+assert payload["frontmatter_present"] is True
+assert payload["body"] == "# JSON note\n"
+assert payload["diagnostics"] == []
 PY
 }
 
-@test "read --json works for plain notes without frontmatter" {
-  cat > "$NOTES_CALLER_PWD/notes/plain-json.md" <<'EOF'
-# Plain Note
+@test "read resolves absolute paths and a custom notes directory" {
+  local custom="$NOTES_CALLER_PWD/journal"
+  mkdir -p "$custom"
+  printf '%s\n' "absolute body" > "$custom/entry.md"
 
-No frontmatter.
-EOF
-
-  run notes_read plain-json --json
+  run notes read "$custom/entry.md"
   [ "$status" -eq 0 ]
+  [ "$output" = "absolute body" ]
 
-  save_read_output
-  JSON_PATH="$read_output" python3 <<'PY'
-import json
-import os
-from pathlib import Path
-
-with Path(os.environ["JSON_PATH"]).open(encoding="utf-8") as handle:
-    data = json.load(handle)
-
-assert data["frontmatter"] == {}
-assert data["frontmatter_present"] is False
-assert "Plain Note" in data["body"]
-assert data["diagnostics"] == []
-PY
+  run notes read entry --dir journal
+  [ "$status" -eq 0 ]
+  [ "$output" = "absolute body" ]
 }
 
-@test "read treats malformed frontmatter delimiters as visible body" {
-  cat > "$NOTES_CALLER_PWD/notes/malformed.md" <<'EOF'
----
-title: Missing End
-# This is all body text.
-EOF
+@test "read reports a missing note" {
+  run notes read nonexistent
 
-  run notes_read malformed
-  [ "$status" -eq 0 ]
-  [[ "$output" == "---"* ]]
-  [[ "$output" == *"Missing End"* ]]
-}
-
-@test "read reports missing notes" {
-  run notes_read nonexistent
   [ "$status" -ne 0 ]
-  [[ "$output" == *"note not found: nonexistent"* ]]
+  [[ "$output" == "Error: note not found: nonexistent"* ]]
 }
 
-@test "read resolves note by slug" {
-  cat > "$NOTES_CALLER_PWD/notes/slug-test.md" <<'EOF'
----
-title: Slug Test
----
-# Slug Test
+@test "read rejects non-UTF-8 note content" {
+  printf '\xff\n' > "$NOTES_CALLER_PWD/notes/binary.md"
 
-Body resolved by slug.
-EOF
+  run notes read binary
 
-  run notes_read slug-test
-  [ "$status" -eq 0 ]
-  [[ "$output" == "# Slug Test"* ]]
+  [ "$status" -ne 0 ]
+  [[ "$output" == "Error: note is not valid UTF-8:"* ]]
+  [[ "$output" == *"notes/binary.md"* ]]
 }
 
-@test "read resolves note by absolute path" {
-  cat > "$NOTES_CALLER_PWD/notes/absolute-test.md" <<'EOF'
----
-title: Absolute Test
----
-# Absolute Test
+@test "read fails closed when managed notes are locked" {
+  git -C "$NOTES_CALLER_PWD" init -q
+  printf 'notes/** filter=git-crypt diff=git-crypt\n' > "$NOTES_CALLER_PWD/.gitattributes"
+  printf '\x00GITCRYPT\x00locked' > "$NOTES_CALLER_PWD/notes/.manifest"
+  printf '%s\n' "unreadable" > "$NOTES_CALLER_PWD/notes/locked.md"
 
-Body resolved by absolute path.
-EOF
+  run notes read locked
 
-  run notes_read "$NOTES_CALLER_PWD/notes/absolute-test.md"
-  [ "$status" -eq 0 ]
-  [[ "$output" == "# Absolute Test"* ]]
-}
-
-@test "read --json includes diagnostics when present" {
-  cat > "$NOTES_CALLER_PWD/notes/diag-test.md" <<'EOF'
-# No frontmatter
-
-But still valid body.
-EOF
-
-  run notes_read diag-test --json
-  [ "$status" -eq 0 ]
-
-  save_read_output
-  JSON_PATH="$read_output" python3 <<'PY'
-import json
-import os
-from pathlib import Path
-
-with Path(os.environ["JSON_PATH"]).open(encoding="utf-8") as handle:
-    data = json.load(handle)
-
-assert data["frontmatter"] == {}
-assert data["frontmatter_present"] is False
-assert data["diagnostics"] == []
-PY
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"git-crypt is locked"* ]]
+  [[ "$output" == *"notes unlock"* ]]
+  [[ "$output" != *"unreadable"* ]]
 }
