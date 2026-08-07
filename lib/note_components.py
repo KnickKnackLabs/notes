@@ -30,6 +30,7 @@ class Diagnostic:
 @dataclass(frozen=True)
 class ParsedNote:
     path: Path | None
+    source: str
     frontmatter: dict[str, Any] | None
     body: str
     diagnostics: list[Diagnostic]
@@ -46,7 +47,13 @@ class ParsedNote:
 
 def parse_note_text(text: str, *, path: Path | None = None) -> ParsedNote:
     frontmatter, body = parse_frontmatter_text(text)
-    return ParsedNote(path=path, frontmatter=frontmatter, body=body, diagnostics=[])
+    return ParsedNote(
+        path=path,
+        source=text,
+        frontmatter=frontmatter,
+        body=body,
+        diagnostics=[],
+    )
 
 
 def read_note_components(path: Path) -> ParsedNote:

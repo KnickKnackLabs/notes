@@ -6,7 +6,7 @@
 
 **Collective memory, encrypted.**
 
-[![tests: 478](https://img.shields.io/badge/tests-478-brightgreen?style=flat)](test/)
+[![tests: 486](https://img.shields.io/badge/tests-486-brightgreen?style=flat)](test/)
 ![lints: 8](https://img.shields.io/badge/lints-8-blue?style=flat)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue?style=flat)](LICENSE)
 
@@ -45,6 +45,7 @@ notes setup --yes
 # Work with ordinary Markdown.
 notes new --slug project-plan --title "Project plan" --tags planning
 notes search "project plan"
+notes read project-plan
 
 # Review and commit through the readable/obfuscated boundary.
 notes changes --summary
@@ -58,6 +59,7 @@ notes diff HEAD~1..HEAD
 - Join an existing encrypted repo with `notes setup --yes --unlock`.
 - `setup`, `lock`, `install-hooks`, and `unlock --force` require explicit confirmation.
 - Prefer `notes commit` for note-only work; use `notes stage` when you need manual Git control.
+- `notes read` strips YAML frontmatter by default; use `--with-frontmatter` to preserve the exact source or `--json` for parsed components. Proposed tail blocks remain ordinary body Markdown until their convention is settled.
 - Before publishing a ref, run `notes verify-blobs --ref HEAD --strict` to prove its managed blobs are encrypted and local note changes are absent.
 - `notes lock` currently locks every git-crypt path in the repository, not only `notes/`.
 - Use `notes conflicts` or `notes merge --dry-run` to materialize readable conflict artifacts.

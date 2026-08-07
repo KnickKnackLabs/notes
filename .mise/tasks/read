@@ -1,7 +1,9 @@
 #!/usr/bin/env -S uv run --script
-#MISE description="Parse a note into convention-aware components as JSON"
+#MISE description="Read a note's body, stripping frontmatter by default"
 #USAGE arg "<note>" help="Note path or slug" required=#true
 #USAGE flag "--dir <dir>" help="Notes directory relative to repo root" default="notes"
+#USAGE flag "--json" help="Output parsed frontmatter and body as JSON" default=#false
+#USAGE flag "--with-frontmatter" help="Preserve frontmatter in plain text output" default=#false
 # /// script
 # dependencies = []
 # ///
@@ -17,10 +19,10 @@ repo_dir = Path(os.environ["MISE_CONFIG_ROOT"])
 target_dir = Path(os.environ.get("NOTES_CALLER_PWD", "."))
 notes_dir = target_dir / os.environ.get("usage_dir", "notes")
 selector = os.environ.get("usage_note", "")
+want_json = os.environ.get("usage_json", "false") == "true"
+want_frontmatter = os.environ.get("usage_with_frontmatter", "false") == "true"
 
 sys.path.insert(0, str(repo_dir / "lib"))
-# These are repo-local imports loaded from MISE_CONFIG_ROOT/lib, not uv
-# dependencies.
 from note_components import read_note_components  # noqa: E402
 from note_selection import resolve_note_path  # noqa: E402
 
@@ -46,7 +48,12 @@ def main() -> int:
         print(f"Error: note is not valid UTF-8: {note_path}", file=sys.stderr)
         return 1
 
-    print(json.dumps(parsed.to_json(), indent=2, ensure_ascii=False))
+    if want_json:
+        print(json.dumps(parsed.to_json(), indent=2, ensure_ascii=False))
+    elif want_frontmatter:
+        print(parsed.source, end="")
+    else:
+        print(parsed.body, end="")
     return 0
 
 
