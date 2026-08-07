@@ -22,7 +22,6 @@ require_readable_notes_state "$notes_dir"
 
 python3 - "$REPO_DIR" "$notes_dir" "${usage_query:-}" "${usage_json:-false}" "${usage_tag:-}" "${usage_type:-}" "${usage_status:-}" "${usage_limit:-50}" <<'PY'
 import json
-import subprocess
 import sys
 from pathlib import Path
 
@@ -37,6 +36,7 @@ limit = sys.argv[8]
 
 sys.path.insert(0, str(repo_dir / "lib"))
 from frontmatter import filter_notes, iter_notes  # noqa: E402
+from table_output import print_table  # noqa: E402
 
 try:
     limit_count = int(limit)
@@ -96,13 +96,17 @@ elif not rows:
     suffix = f" with {' '.join(filters)}" if filters else ""
     print(f"No notes found matching: {query}{suffix}")
 else:
-    table = "Title\tType\tStatus\tUpdated\tMatches\n" + "\n".join(
-        f"{row['title']}\t{row['type']}\t{row['status']}\t{row['date']}\t{' | '.join(row['matches'][:2])}" for row in rows
-    )
-    subprocess.run(
-        ["gum", "table", "--print", "--separator", "\t"],
-        input=table,
-        text=True,
-        check=True,
+    print_table(
+        ["Title", "Type", "Status", "Updated", "Matches"],
+        [
+            [
+                row["title"],
+                row["type"],
+                row["status"],
+                row["date"],
+                " | ".join(row["matches"][:2]),
+            ]
+            for row in rows
+        ],
     )
 PY

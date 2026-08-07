@@ -84,3 +84,35 @@ EOF
   [ "$status" -eq 0 ]
   [[ "$output" == *"No notes found matching: absent"* ]]
 }
+
+@test "search falls back to sanitized TSV when gum table fails" {
+  python3 <<'PY'
+import os
+from pathlib import Path
+
+notes_dir = Path(os.environ["NOTES_CALLER_PWD"]) / "notes"
+(notes_dir / "unusual.md").write_text(
+    "---\n"
+    'title: "Tab\tTitle"\n'
+    "type: note\n"
+    "status: active\n"
+    "tags: [test]\n"
+    "created: 2026-01-01\n"
+    "updated: 2026-01-02\n"
+    "---\n\n"
+    "# Tab\tTitle\n"
+    "Body with\ta\ttab\ttoo.\n",
+    encoding="utf-8",
+)
+PY
+  make_failing_gum
+
+  run notes search Tab
+
+  [ "$status" -eq 0 ]
+  [ -s "$GUM_LOG" ]
+  [[ "$output" == *$'Title\tType\tStatus\tUpdated\tMatches'* ]]
+  [[ "$output" == *"Tab Title"* ]]
+  [[ "$output" == *"# Tab Title"* ]]
+  [[ "$output" != *"partial gum output"* ]]
+}

@@ -41,6 +41,29 @@ setup() {
   echo "$output" | python3 -c "import sys, json; data = json.load(sys.stdin); assert data[0]['tags'] == ['alpha', 'beta', 'gamma']"
 }
 
+@test "list falls back to TSV when gum is unavailable" {
+  notes new -- --slug alpha --title "Alpha Note" --tags "testing" --updated "2026-03-14"
+  export GUM="$BATS_TEST_TMPDIR/missing-gum"
+
+  run notes list
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *$'Title\tType\tStatus\tTags\tUpdated'* ]]
+  [[ "$output" == *$'Alpha Note\t'* ]]
+  [[ "$output" == *$'testing\t2026-03-14'* ]]
+}
+
+@test "list --json bypasses gum presentation" {
+  notes new -- --slug beta --title "Beta Note" --tags "testing" --updated "2026-03-15"
+  make_failing_gum
+
+  run notes list -- --json
+
+  [ "$status" -eq 0 ]
+  [ ! -e "$GUM_LOG" ]
+  echo "$output" | python3 -c "import sys, json; assert json.load(sys.stdin)[0]['title'] == 'Beta Note'"
+}
+
 @test "list --recent limits output" {
   notes new -- --slug old --title "Old Note" --tags "test" --updated "2026-03-10"
   notes new -- --slug mid --title "Mid Note" --tags "test" --updated "2026-03-15"
