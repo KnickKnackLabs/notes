@@ -85,32 +85,34 @@ EOF
   [[ "$output" == *"No notes found matching: absent"* ]]
 }
 
-@test "search falls back to TSV when gum table rejects unusual characters" {
-  # Write a note with a literal tab in the title — this breaks gum table's TSV parser
-  python3 << 'PYEND'
+@test "search falls back to sanitized TSV when gum table fails" {
+  python3 <<'PY'
 import os
-path = os.path.join(os.environ['NOTES_CALLER_PWD'], 'notes', 'unusual.md')
-content = (
-    '---\n'
+from pathlib import Path
+
+notes_dir = Path(os.environ["NOTES_CALLER_PWD"]) / "notes"
+(notes_dir / "unusual.md").write_text(
+    "---\n"
     'title: "Tab\tTitle"\n'
-    'type: note\n'
-    'status: active\n'
-    'tags: [test]\n'
-    'created: 2026-01-01\n'
-    'updated: 2026-01-02\n'
-    '---\n'
-    '\n'
-    '# Tab\tTitle\n'
-    'Body with\ta\ttab\ttoo.\n'
+    "type: note\n"
+    "status: active\n"
+    "tags: [test]\n"
+    "created: 2026-01-01\n"
+    "updated: 2026-01-02\n"
+    "---\n\n"
+    "# Tab\tTitle\n"
+    "Body with\ta\ttab\ttoo.\n",
+    encoding="utf-8",
 )
-with open(path, 'w') as f:
-    f.write(content)
-PYEND
+PY
+  make_failing_gum
 
   run notes search Tab
+
   [ "$status" -eq 0 ]
-  # Should get sanitized output (tabs → spaces), not a crash
-  echo "$output" | grep -q "Tab Title"
-  # Body match snippet found (matches[:2] limits display, but first body line is enough)
-  echo "$output" | grep -q "# Tab Title"
+  [ -s "$GUM_LOG" ]
+  [[ "$output" == *$'Title\tType\tStatus\tUpdated\tMatches'* ]]
+  [[ "$output" == *"Tab Title"* ]]
+  [[ "$output" == *"# Tab Title"* ]]
+  [[ "$output" != *"partial gum output"* ]]
 }

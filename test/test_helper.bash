@@ -46,6 +46,19 @@ SH
 }
 export -f make_failing_xargs_overlay
 
+make_failing_gum() {
+  export GUM="$BATS_TEST_TMPDIR/failing-gum"
+  export GUM_LOG="$BATS_TEST_TMPDIR/gum.log"
+  cat > "$GUM" <<'SH'
+#!/usr/bin/env bash
+printf 'called\n' >> "${GUM_LOG:?}"
+printf 'partial gum output\n'
+exit 71
+SH
+  chmod +x "$GUM"
+}
+export -f make_failing_gum
+
 # rudi() wrapper — calls rudi against the same target repo.
 rudi() {
   if [ -z "${NOTES_CALLER_PWD:-}" ]; then

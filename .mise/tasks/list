@@ -21,7 +21,6 @@ require_readable_notes_state "$notes_dir"
 
 python3 - "$REPO_DIR" "$notes_dir" "${usage_json:-false}" "${usage_recent:-}" "${usage_tag:-}" "${usage_type:-}" "${usage_status:-}" <<'PY'
 import json
-import subprocess
 import sys
 from pathlib import Path
 
@@ -35,6 +34,7 @@ status_filter = sys.argv[7]
 
 sys.path.insert(0, str(repo_dir / "lib"))
 from frontmatter import filter_notes, iter_notes  # noqa: E402
+from table_output import print_table  # noqa: E402
 
 rows = [
     note.row()
@@ -69,19 +69,17 @@ elif not rows:
     else:
         print("No notes found.")
 else:
-    def _sanitize(val: str) -> str:
-        return str(val).replace("\t", " ").replace("\n", "⏎")
-
-    table = "Title\tType\tStatus\tTags\tUpdated\n" + "\n".join(
-        f"{_sanitize(row['title'])}\t{_sanitize(row['type'])}\t{_sanitize(row['status'])}\t{_sanitize(', '.join(row['tags']))}\t{_sanitize(row['date'])}" for row in rows
+    print_table(
+        ["Title", "Type", "Status", "Tags", "Updated"],
+        [
+            [
+                row["title"],
+                row["type"],
+                row["status"],
+                ", ".join(row["tags"]),
+                row["date"],
+            ]
+            for row in rows
+        ],
     )
-    try:
-        subprocess.run(
-            ["gum", "table", "--print", "--separator", "\t"],
-            input=table,
-            text=True,
-            check=True,
-        )
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        print(table)
 PY
