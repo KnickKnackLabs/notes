@@ -8,12 +8,58 @@
 
 load test_helper
 
+setup_failing_ref_tree_enumeration_overlay() {
+  FAILING_GIT_BIN="$BATS_TEST_TMPDIR/failing-ref-tree-git"
+  local real_git
+  real_git=$(command -v git)
+  mkdir -p "$FAILING_GIT_BIN"
+  cat > "$FAILING_GIT_BIN/git" <<'SH'
+#!/usr/bin/env bash
+case " $* " in
+  *" ls-tree -r -z --name-only HEAD -- notes/ ")
+    echo "ref tree enumeration failed" >&2
+    exit 73
+    ;;
+esac
+exec "$REAL_GIT" "$@"
+SH
+  chmod +x "$FAILING_GIT_BIN/git"
+  export REAL_GIT="$real_git"
+}
+
 @test "verify-blobs: all encrypted blobs pass" {
   mkdir -p "$NOTES_CALLER_PWD/notes"
   printf '\x00GITCRYPT\x00aaa00001\talpha.md\n' > "$NOTES_CALLER_PWD/notes/.manifest"
   printf '\x00GITCRYPT\x00encrypted alpha content' > "$NOTES_CALLER_PWD/notes/aaa00001"
   git -C "$NOTES_CALLER_PWD" add -A
   git -C "$NOTES_CALLER_PWD" commit -q -m "all encrypted"
+
+  run notes verify-blobs
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -q "OK"
+}
+
+@test "verify-blobs: fails when ref tree enumeration fails" {
+  mkdir -p "$NOTES_CALLER_PWD/notes"
+  printf '\x00GITCRYPT\x00aaa00001\talpha.md\n' > "$NOTES_CALLER_PWD/notes/.manifest"
+  printf '\x00GITCRYPT\x00encrypted alpha content' > "$NOTES_CALLER_PWD/notes/aaa00001"
+  git -C "$NOTES_CALLER_PWD" add -A
+  git -C "$NOTES_CALLER_PWD" commit -q -m "all encrypted"
+  setup_failing_ref_tree_enumeration_overlay
+
+  PATH="$FAILING_GIT_BIN:$PATH" run notes verify-blobs
+
+  [ "$status" -eq 73 ]
+  [[ "$output" == *"failed to enumerate note blobs"* ]]
+}
+
+@test "verify-blobs: large encrypted blob passes" {
+  mkdir -p "$NOTES_CALLER_PWD/notes"
+  printf '\x00GITCRYPT\x00aaa00001\talpha.md\n' > "$NOTES_CALLER_PWD/notes/.manifest"
+  printf '\x00GITCRYPT\x00' > "$NOTES_CALLER_PWD/notes/aaa00001"
+  dd if=/dev/zero bs=1024 count=128 2>/dev/null >> "$NOTES_CALLER_PWD/notes/aaa00001"
+  git -C "$NOTES_CALLER_PWD" add -A
+  git -C "$NOTES_CALLER_PWD" commit -q -m "large encrypted blob"
 
   run notes verify-blobs
   [ "$status" -eq 0 ]

@@ -15,6 +15,7 @@ TARGET_DIR="${NOTES_CALLER_PWD:-.}"
 NOTES_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NOTES_REPO_DIR="$(cd "$NOTES_LIB_DIR/.." && pwd)"
 HOOKS_DIR="$NOTES_REPO_DIR/hooks"
+source "$NOTES_LIB_DIR/readable-state.sh"
 
 # ── Require checks ────────────────────────────────────────────
 
@@ -153,6 +154,8 @@ confirm_destructive() {
   fi
 
   if command -v gum >/dev/null 2>&1; then
+    # A terminal device intentionally carries prompt input, output, and errors.
+    # shellcheck disable=SC2094
     if gum confirm "$message" <"$tty_path" >"$tty_path" 2>"$tty_path"; then
       return 0
     fi
@@ -174,7 +177,28 @@ confirm_destructive() {
   esac
 }
 
-# ── Path helpers ────────────────────────────────────────────
+# Argument helpers
+
+# Parse mise's shell-quoted variadic argument string.
+#
+# Callers must snapshot this output before consuming it. A process substitution
+# would hide xargs/printf failures behind the consumer loop's exit status.
+# Usage: parse_variadic_args <raw-usage-value>
+parse_variadic_args() {
+  local raw="${1:-}" status=0
+  [ -n "$raw" ] || return 0
+
+  (
+    set -o pipefail
+    printf '%s' "$raw" | xargs printf '%s\n'
+  ) || status=$?
+  if [ "$status" -ne 0 ]; then
+    echo "Error: failed to parse variadic arguments." >&2
+    return "$status"
+  fi
+}
+
+# Path helpers
 
 # Resolve the notes directory path relative to the repo root.
 # Handles macOS symlinks (/tmp → /private/tmp) by resolving real paths.
@@ -234,13 +258,29 @@ detect_double_tracked_notes() {
   local repo_root="${1:?usage: detect_double_tracked_notes <repo_root> <notes_dir_rel>}"
   local notes_dir_rel="${2:?usage: detect_double_tracked_notes <repo_root> <notes_dir_rel>}"
   local manifest="$repo_root/$notes_dir_rel/.manifest"
+  local workspace snapshot tracked_paths tracked_path rc
   [ ! -f "$manifest" ] && return 0
 
-  while IFS=$'\t' read -r id relpath; do
-    [ -z "$id" ] && continue
-    # If the readable path is tracked in git's index, it's double-tracked.
-    if git -C "$repo_root" ls-files --error-unmatch -- "$notes_dir_rel/$relpath" >/dev/null 2>&1; then
-      printf '%s\t%s\n' "$id" "$relpath"
-    fi
-  done < "$manifest"
+  workspace=$(mktemp -d) || return 1
+  snapshot="$workspace/snapshot"
+  tracked_paths="$workspace/tracked-paths"
+  if ! git -C "$repo_root" ls-files -z -- "$notes_dir_rel" > "$snapshot"; then
+    rm -rf "$workspace"
+    return 1
+  fi
+
+  # Git quotes backslashes, quotes, and control characters in line-delimited
+  # output even with core.quotePath=false. Read its NUL-delimited snapshot and
+  # normalize the manifest-representable paths without starting more processes.
+  while IFS= read -r -d '' tracked_path; do
+    printf '%s\n' "$tracked_path"
+  done < "$snapshot" > "$tracked_paths"
+
+  awk -F '\t' -v tracked_file="$tracked_paths" -v prefix="$notes_dir_rel/" '
+    FILENAME == tracked_file { tracked[$0] = 1; next }
+    $1 != "" && ((prefix $2) in tracked) { print $1 "\t" $2 }
+  ' "$tracked_paths" "$manifest"
+  rc=$?
+  rm -rf "$workspace"
+  return "$rc"
 }

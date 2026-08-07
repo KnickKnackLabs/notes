@@ -23,16 +23,29 @@ fi
 # Parse variadic args
 ARGS=()
 if [ -n "${usage_files:-}" ]; then
+  args_snapshot=$(mktemp) || { echo "Error: failed to create argument snapshot" >&2; exit 1; }
+  parse_status=0
+  parse_variadic_args "$usage_files" > "$args_snapshot" || parse_status=$?
+  if [ "$parse_status" -ne 0 ]; then
+    rm -f "$args_snapshot"
+    exit "$parse_status"
+  fi
   while IFS= read -r arg; do
     arg="${arg#"${notes_dir}/"}"
     [ -z "$arg" ] && continue
     ARGS+=("$arg")
-  done < <(printf '%s' "${usage_files}" | xargs printf '%s\n')
+  done < "$args_snapshot"
+  rm -f "$args_snapshot"
 fi
 
 if [ "${usage_summary:-}" = "true" ]; then
-  # Summary mode: just list changes
-  changes=$(detect_changes "$abs_notes_dir") || true
+  # Summary mode: just list changes. An unavailable manifest is a clean result.
+  detect_status=0
+  changes=$(detect_changes "$abs_notes_dir") || detect_status=$?
+  if [ "$detect_status" -ne 0 ]; then
+    echo "Error: failed to inspect note changes." >&2
+    exit "$detect_status"
+  fi
 
   if [ -z "$changes" ]; then
     echo "No changes."
@@ -62,10 +75,10 @@ if [ "${usage_summary:-}" = "true" ]; then
     fi
 
     case "$status" in
-      modified)       echo "  modified:  $relpath"; ((modified++)) || true ;;
-      new)            echo "  new:       $relpath"; ((new++)) || true ;;
-      deleted)        echo "  deleted:   $relpath"; ((deleted++)) || true ;;
-      stale-readable) echo "  stale-readable: $relpath"; ((stale++)) || true ;;
+      modified)       echo "  modified:  $relpath"; modified=$((modified + 1)) ;;
+      new)            echo "  new:       $relpath"; new=$((new + 1)) ;;
+      deleted)        echo "  deleted:   $relpath"; deleted=$((deleted + 1)) ;;
+      stale-readable) echo "  stale-readable: $relpath"; stale=$((stale + 1)) ;;
     esac
   done <<< "$changes"
 
@@ -77,8 +90,13 @@ if [ "${usage_summary:-}" = "true" ]; then
     echo "$total change(s): $modified modified, $new new, $deleted deleted, $stale stale-readable"
   fi
 else
-  # Diff mode: show full diffs
-  changes=$(detect_changes "$abs_notes_dir") || true
+  # Diff mode: show full diffs. An unavailable manifest is a clean result.
+  detect_status=0
+  changes=$(detect_changes "$abs_notes_dir") || detect_status=$?
+  if [ "$detect_status" -ne 0 ]; then
+    echo "Error: failed to inspect note changes." >&2
+    exit "$detect_status"
+  fi
 
   if [ -z "$changes" ]; then
     echo "No changes."

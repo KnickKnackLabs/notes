@@ -9,6 +9,7 @@
 set -euo pipefail
 
 REPO_DIR="${MISE_CONFIG_ROOT:?MISE_CONFIG_ROOT not set}"
+source "$REPO_DIR/lib/readable-state.sh"
 TARGET_DIR="${NOTES_CALLER_PWD:-.}"
 notes_dir="$TARGET_DIR/${usage_dir:-notes}"
 
@@ -16,6 +17,7 @@ if [ ! -d "$notes_dir" ]; then
   echo "Error: notes directory not found: $notes_dir" >&2
   exit 1
 fi
+require_readable_notes_state "$notes_dir"
 
 python3 - "$REPO_DIR" "$notes_dir" "${usage_json:-false}" "${usage_recent:-}" "${usage_tag:-}" "${usage_type:-}" "${usage_status:-}" <<'PY'
 import json

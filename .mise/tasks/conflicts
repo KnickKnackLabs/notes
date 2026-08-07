@@ -11,6 +11,7 @@ require_git
 notes_dir="${usage_dir:-notes}"
 out_arg="${usage_out:-}"
 repo_root=$(git -C "$TARGET_DIR" rev-parse --show-toplevel)
+require_readable_notes_state "$repo_root/$notes_dir"
 
 if ! records=$(notes_conflict_records "$repo_root" "$notes_dir"); then
   exit 1
@@ -21,7 +22,9 @@ if [ -z "$records" ]; then
   exit 0
 fi
 
-record_count=$(printf '%s\n' "$records" | grep -c . || true)
+if ! record_count=$(printf '%s\n' "$records" | grep -c .); then
+  record_count=0
+fi
 
 if [ -n "$out_arg" ]; then
   out_dir="$out_arg"

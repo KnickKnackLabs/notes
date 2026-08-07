@@ -9,6 +9,8 @@ set -euo pipefail
 
 source "$MISE_CONFIG_ROOT/lib/common.sh"
 source "$MISE_CONFIG_ROOT/lib/hooks.sh"
+source "$MISE_CONFIG_ROOT/lib/encryption.sh"
+source "$MISE_CONFIG_ROOT/lib/setup.sh"
 require_git
 require_rudi
 
@@ -17,28 +19,94 @@ cd "$TARGET_DIR"
 
 NOTES_DIR="${usage_dir:-notes}"
 
+keys=()
+if [ -n "${usage_gpg_key:-}" ]; then
+  args_snapshot=$(mktemp) || { echo "Error: failed to create argument snapshot" >&2; exit 1; }
+  parse_status=0
+  parse_variadic_args "$usage_gpg_key" > "$args_snapshot" || parse_status=$?
+  if [ "$parse_status" -ne 0 ]; then
+    rm -f "$args_snapshot"
+    exit "$parse_status"
+  fi
+  while IFS= read -r key; do
+    [ -n "$key" ] && keys+=("$key")
+  done < "$args_snapshot"
+  rm -f "$args_snapshot"
+fi
+
+patterns=()
+if [ -n "${usage_pattern:-}" ]; then
+  args_snapshot=$(mktemp) || { echo "Error: failed to create argument snapshot" >&2; exit 1; }
+  parse_status=0
+  parse_variadic_args "$usage_pattern" > "$args_snapshot" || parse_status=$?
+  if [ "$parse_status" -ne 0 ]; then
+    rm -f "$args_snapshot"
+    exit "$parse_status"
+  fi
+  while IFS= read -r pattern; do
+    [ -n "$pattern" ] && patterns+=("$pattern")
+  done < "$args_snapshot"
+  rm -f "$args_snapshot"
+fi
+if [ ${#patterns[@]} -eq 0 ]; then
+  patterns=("$NOTES_DIR/**")
+fi
+
+# Inspect the pre-setup index before attributes or the manifest can change how
+# tracked notes are interpreted.
+tracked_readable_snapshot=$(mktemp) || {
+  echo "Error: failed to create tracked note snapshot" >&2
+  exit 1
+}
+if ! write_tracked_readable_notes \
+    "$TARGET_DIR" "$NOTES_DIR" "$tracked_readable_snapshot"; then
+  rm -f "$tracked_readable_snapshot"
+  echo "Error: failed to inspect tracked notes before setup." >&2
+  exit 1
+fi
+tracked_readable_count=$(tracked_readable_note_count "$tracked_readable_snapshot")
+
+repo_was_initialized=false
+is_initialized && repo_was_initialized=true
+unlock_requested=${usage_unlock:-false}
+if ! require_tracked_plaintext_setup_ready \
+    "$TARGET_DIR" "$tracked_readable_snapshot" "$tracked_readable_count" \
+    "$repo_was_initialized" "$unlock_requested"; then
+  rm -f "$tracked_readable_snapshot"
+  exit 1
+fi
+rm -f "$tracked_readable_snapshot"
+
 setup_confirmation_message="notes setup will initialize/update git-crypt, .gitattributes, $NOTES_DIR/.manifest, and git hooks for $NOTES_DIR/ in this repo."
+if [ "$tracked_readable_count" -gt 0 ]; then
+  setup_confirmation_message="$setup_confirmation_message It will prepare $tracked_readable_count tracked plaintext note(s) for forward encryption."
+fi
 if [ "${usage_unlock:-false}" = "true" ]; then
   setup_confirmation_message="$setup_confirmation_message It will also unlock/decrypt all git-crypt files after setup."
 fi
 confirm_destructive "$setup_confirmation_message Continue?"
 
 # --- Initialize via rudi ---
-if is_initialized || [ -d "$TARGET_DIR/.git/git-crypt" ]; then
+if $repo_was_initialized; then
   echo "git-crypt already initialized — updating auxiliary files..."
 else
   echo "Initializing git-crypt..."
   rudi init --no-user
 fi
-
-# --- Add GPG keys via rudi ---
-keys=()
-if [ -n "${usage_gpg_key:-}" ]; then
-  while IFS= read -r key; do
-    [ -n "$key" ] && keys+=("$key")
-  done < <(printf '%s' "$usage_gpg_key" | xargs printf '%s\n')
+if [ "$tracked_readable_count" -gt 0 ]; then
+  echo "Preparing $tracked_readable_count tracked plaintext note(s) for forward encryption..."
 fi
 
+# Existing repositories must unlock before setup dirties .gitattributes.
+unlocked_before_mutation=false
+if [ "${usage_unlock:-false}" = "true" ] && $repo_was_initialized; then
+  echo ""
+  echo "Unlocking..."
+  cd "$MISE_CONFIG_ROOT" && NOTES_CALLER_PWD="$TARGET_DIR" mise run -q unlock
+  unlocked_before_mutation=true
+fi
+
+# --- Add GPG keys via rudi ---
 if [ ${#keys[@]} -gt 0 ]; then
   echo ""
   echo "Adding GPG collaborators..."
@@ -64,55 +132,7 @@ if [ ${#keys[@]} -gt 0 ]; then
 fi
 
 # --- Configure .gitattributes via rudi ---
-GITATTRIBUTES="$TARGET_DIR/.gitattributes"
-
-gitattributes_has_encrypted_pattern() {
-  local pattern="$1"
-  awk -v pattern="$pattern" '
-    $1 == pattern {
-      for (i = 2; i <= NF; i++) {
-        if ($i == "filter=git-crypt") found = 1
-      }
-    }
-    END { exit(found ? 0 : 1) }
-  ' "$GITATTRIBUTES" 2>/dev/null
-}
-
-patterns=()
-if [ -n "${usage_pattern:-}" ]; then
-  while IFS= read -r pattern; do
-    [ -n "$pattern" ] && patterns+=("$pattern")
-  done < <(printf '%s' "$usage_pattern" | xargs printf '%s\n')
-fi
-if [ ${#patterns[@]} -eq 0 ]; then
-  patterns=("$NOTES_DIR/**")
-fi
-
-missing_patterns=()
-for p in "${patterns[@]}"; do
-  [ -z "$p" ] && continue
-  if ! gitattributes_has_encrypted_pattern "$p"; then
-    missing_patterns+=("$p")
-  fi
-done
-
-if [ ${#missing_patterns[@]} -gt 0 ]; then
-  echo ""
-  echo "Configuring encrypted patterns..."
-  for p in "${missing_patterns[@]}"; do
-    rudi assign "$p"
-    if ! gitattributes_has_encrypted_pattern "$p"; then
-      # rudi treats an existing pattern with disabled attributes (for example
-      # "notes/** -filter=git-crypt") as already assigned. Append an explicit
-      # positive assignment so the requested pattern is actually encrypted.
-      printf '%-40s filter=git-crypt diff=git-crypt\n' "$p" >> "$GITATTRIBUTES"
-    fi
-  done
-  echo "  Updated .gitattributes"
-else
-  echo ""
-  echo "  Requested encrypted patterns already configured"
-fi
+configure_setup_encrypted_patterns "$TARGET_DIR" "${patterns[@]}"
 
 # --- Bootstrap obfuscation manifest ---
 if [ ! -f "$TARGET_DIR/$NOTES_DIR/.manifest" ]; then
@@ -131,22 +151,23 @@ echo "  Installed hooks"
 
 # --- Unlock if requested ---
 if [ "${usage_unlock:-false}" = "true" ]; then
-  echo ""
-  echo "Unlocking..."
-  cd "$MISE_CONFIG_ROOT" && NOTES_CALLER_PWD="$TARGET_DIR" mise run -q unlock
+  if ! $unlocked_before_mutation; then
+    echo ""
+    echo "Unlocking..."
+    cd "$MISE_CONFIG_ROOT" && NOTES_CALLER_PWD="$TARGET_DIR" mise run -q unlock
+  fi
   echo ""
   echo "Done! Repo is set up and unlocked."
 else
   # Detect if this is an existing repo with encrypted notes
   # (i.e., joining an existing repo vs creating a new one).
-  has_encrypted_notes=false
-  if [ -d "$TARGET_DIR/$NOTES_DIR" ]; then
-    while IFS= read -r -d '' f; do
-      if head -c 10 "$f" 2>/dev/null | grep -q "GITCRYPT"; then
-        has_encrypted_notes=true
-        break
-      fi
-    done < <(find "$TARGET_DIR/$NOTES_DIR" -type f ! -name .manifest -print0 2>/dev/null)
+  has_encrypted_notes=""
+  encrypted_notes_status=0
+  has_encrypted_notes=$(notes_tree_encryption_state "$TARGET_DIR/$NOTES_DIR") \
+    || encrypted_notes_status=$?
+  if [ "$encrypted_notes_status" -ne 0 ]; then
+    echo "Error: failed to inspect existing encrypted notes." >&2
+    exit "$encrypted_notes_status"
   fi
 
   echo ""
@@ -158,6 +179,13 @@ else
     echo "  This repo already has encrypted notes."
     echo "  Run 'notes unlock' to decrypt them (requires your GPG key)."
     echo "  Or re-run setup with --unlock: notes setup --unlock"
+  elif [ "$tracked_readable_count" -gt 0 ]; then
+    echo "  1. Stage attributes: git add .gitattributes"
+    echo "  2. Stage notes:      notes stage --all"
+    echo "  3. Commit setup and encrypted notes"
+    echo ""
+    echo "Existing tracked notes need a one-time Notes stage so Git reapplies"
+    echo "the new encryption filter and the commit hook obfuscates their names."
   else
     echo "  1. Check status:     notes status"
     echo "  2. Commit the setup: git add .gitattributes .git-crypt && git commit"

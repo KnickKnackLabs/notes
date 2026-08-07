@@ -22,102 +22,154 @@ fi
 # Limitation: backslashes in filenames are treated as escape characters by xargs.
 ARGS=()
 if [ -n "${usage_files:-}" ]; then
+  args_snapshot=$(mktemp) || { echo "Error: failed to create argument snapshot" >&2; exit 1; }
+  parse_status=0
+  parse_variadic_args "$usage_files" > "$args_snapshot" || parse_status=$?
+  if [ "$parse_status" -ne 0 ]; then
+    rm -f "$args_snapshot"
+    exit "$parse_status"
+  fi
   while IFS= read -r arg; do
     # Strip notes_dir prefix if provided (e.g. "notes/alpha.md" → "alpha.md")
     arg="${arg#"${notes_dir}/"}"
     [ -z "$arg" ] && continue
     ARGS+=("$arg")
-  done < <(printf '%s' "${usage_files}" | xargs printf '%s\n')
+  done < "$args_snapshot"
+  rm -f "$args_snapshot"
+fi
+
+plan=$(mktemp) || {
+  echo "Error: failed to create obfuscation plan" >&2
+  exit 1
+}
+renamed=$(mktemp) || {
+  rm -f "$plan"
+  echo "Error: failed to create rename result" >&2
+  exit 1
+}
+indexed_manifest=$(mktemp) || {
+  rm -f "$plan" "$renamed"
+  echo "Error: failed to create manifest snapshot" >&2
+  exit 1
+}
+staged_manifest=$(mktemp) || {
+  rm -f "$plan" "$renamed" "$indexed_manifest"
+  echo "Error: failed to create staged manifest" >&2
+  exit 1
+}
+trap 'rm -f "$plan" "$renamed" "$indexed_manifest" "$staged_manifest"' EXIT
+
+if ! build_obfuscation_plan "$abs_notes_dir" "$plan" ${ARGS[@]+"${ARGS[@]}"}; then
+  echo "Error: obfuscation planning failed" >&2
+  exit 1
 fi
 
 if [ "${usage_dry_run:-}" = "true" ]; then
-  # Dry-run: show what would be renamed without doing it.
-  # Use the same classification logic as rename_to_obfuscated.
-  if [ ${#ARGS[@]} -gt 0 ]; then
-    for relpath in ${ARGS[@]+"${ARGS[@]}"}; do
-      [[ "$relpath" == ".manifest" ]] && continue
-      [ ! -f "$abs_notes_dir/$relpath" ] && continue
-      base=$(basename "$relpath")
-      manifest_has_id "$manifest" "$base" && continue
-      existing_id=$(manifest_id_for_name "$manifest" "$relpath" || true)
-      if [ -n "$existing_id" ]; then
-        echo "  $relpath → $existing_id"
-      else
-        echo "  $relpath → (will be assigned)"
-      fi
-    done
-  else
-    while IFS= read -r f; do
-      [ ! -f "$f" ] && continue
-      relpath="${f#"$abs_notes_dir"/}"
-      [[ "$relpath" == ".manifest" ]] && continue
-      base=$(basename "$f")
-      manifest_has_id "$manifest" "$base" && continue
-      existing_id=$(manifest_id_for_name "$manifest" "$relpath" || true)
-      if [ -n "$existing_id" ]; then
-        echo "  $relpath → $existing_id"
-      else
-        echo "  $relpath → (will be assigned)"
-      fi
-    done < <(find "$abs_notes_dir" -type f | sort)
-  fi
+  while IFS=$'\t' read -r kind id relpath; do
+    if [ "$kind" = "known" ]; then
+      echo "  $relpath → $id"
+    else
+      echo "  $relpath → (will be assigned)"
+    fi
+  done < "$plan"
   exit 0
 fi
 
-# Clear status suppression so git sees the real state for staging.
-# In scoped mode, we need to find the IDs for files being re-obfuscated.
-if [ ${#ARGS[@]} -gt 0 ]; then
+scoped_mode=false
+[ ${#ARGS[@]} -gt 0 ] && scoped_mode=true
+
+# Clear status suppression so git sees the real state for staging. The plan
+# already contains each known ID, avoiding another manifest classification pass.
+if $scoped_mode; then
   scoped_ids=()
-  for relpath in ${ARGS[@]+"${ARGS[@]}"}; do
-    id=$(manifest_id_for_name "$manifest" "$relpath" || true)
-    [ -n "$id" ] && scoped_ids+=("$id")
-  done
-  [ ${#scoped_ids[@]} -gt 0 ] && clear_status_suppression "$abs_notes_dir" ${scoped_ids[@]+"${scoped_ids[@]}"}
+  while IFS=$'\t' read -r kind id relpath; do
+    [ "$kind" = "known" ] && scoped_ids+=("$id")
+  done < "$plan"
+  [ ${#scoped_ids[@]} -gt 0 ] && clear_status_suppression \
+    "$abs_notes_dir" ${scoped_ids[@]+"${scoped_ids[@]}"}
 else
   clear_status_suppression "$abs_notes_dir"
 fi
 
-# Perform the rename via Layer 1
-# Exit codes: 0=success, 2=nothing to do, 1=error
-# Use && rc=0 || rc=$? to capture exit code without triggering errexit.
-output=$(rename_to_obfuscated "$abs_notes_dir" ${ARGS[@]+"${ARGS[@]}"}) && rc=0 || rc=$?
-if [ $rc -eq 2 ]; then
+# Apply the precomputed plan via Layer 1.
+# Exit codes: 0=success, 2=nothing to do, 1=error.
+if apply_obfuscation_plan "$abs_notes_dir" "$plan" "$scoped_mode" > "$renamed"; then
+  rc=0
+else
+  rc=$?
+fi
+if [ "$rc" -eq 2 ]; then
   echo "Nothing to obfuscate."
   exit 0
-elif [ $rc -ne 0 ]; then
+elif [ "$rc" -ne 0 ]; then
   echo "Error: obfuscation failed" >&2
-  exit $rc
+  exit "$rc"
 fi
 
-manifest_entry_matches_head() {
-  local id="$1" relpath="$2"
-  git -C "$TARGET_DIR" cat-file --filters "HEAD:$notes_dir/.manifest" 2>/dev/null \
-    | awk -F '\t' -v id="$id" -v relpath="$relpath" '
-        $1 == id && $2 == relpath { found=1 }
-        END { exit found ? 0 : 1 }
-      '
-}
-
-# Stage the results: add obfuscated files, remove readable names from index.
-# In full mode, stage the manifest normally. In scoped mode, stage it only when
-# one of the scoped files needs a manifest update in HEAD. This prevents an
-# unrelated uncommitted manifest entry (for a skipped new note) from leaking into
-# a commit when the pre-commit hook obfuscates a modified known note.
+# Stage all renamed paths in two Git calls instead of once per note.
+obfuscated_paths=()
+readable_paths=()
 new_count=0
-stage_manifest=false
-[ ${#ARGS[@]} -eq 0 ] && stage_manifest=true
 while IFS=$'\t' read -r relpath id; do
-  git -C "$TARGET_DIR" add "$notes_dir/$id"
-  git -C "$TARGET_DIR" rm --cached --quiet "$notes_dir/$relpath" 2>/dev/null || true
-  if ! manifest_entry_matches_head "$id" "$relpath"; then
+  obfuscated_paths+=("$notes_dir/$id")
+  readable_paths+=("$notes_dir/$relpath")
+  echo "  $relpath → $id"
+  new_count=$((new_count + 1))
+done < "$renamed"
+
+git -C "$TARGET_DIR" add --sparse -- "${obfuscated_paths[@]}"
+git -C "$TARGET_DIR" rm --cached --quiet --ignore-unmatch -- \
+  "${readable_paths[@]}"
+
+# Full mode always owns the complete manifest. Scoped mode stages it only when
+# a renamed mapping is absent from the index, preventing unrelated unstaged
+# mappings from leaking while preserving manifest changes already selected by
+# notes stage.
+stage_manifest=false
+if ! $scoped_mode; then
+  stage_manifest=true
+else
+  if ! git -C "$TARGET_DIR" cat-file --filters \
+    ":$notes_dir/.manifest" > "$indexed_manifest" 2>/dev/null; then
+    : > "$indexed_manifest"
+  fi
+  if ! awk -F '\t' -v renamed="$renamed" '
+    FILENAME != renamed {
+      entries[$1 FS $2] = 1
+      next
+    }
+    !(($2 FS $1) in entries) { missing = 1 }
+    END { exit missing ? 1 : 0 }
+  ' "$indexed_manifest" "$renamed"; then
     stage_manifest=true
   fi
-  echo "  $relpath → $id"
-  ((new_count++)) || true
-done <<< "$output"
+fi
 
 if $stage_manifest; then
-  git -C "$TARGET_DIR" add "$manifest"
+  if ! $scoped_mode; then
+    git -C "$TARGET_DIR" add "$manifest"
+  else
+    # Stage the indexed manifest plus only this operation's mappings. Keep
+    # unrelated working edits out of the index, and use the same canonical
+    # name ordering as the working manifest.
+    awk -F '\t' -v OFS='\t' -v renamed="$renamed" '
+      FILENAME == renamed {
+        target_ids[$2] = 1
+        target_names[$1] = 1
+        rows[++count] = $2 FS $1
+        next
+      }
+      !(($1 in target_ids) || ($2 in target_names)) { print }
+      END {
+        for (i = 1; i <= count; i++) print rows[i]
+      }
+    ' "$renamed" "$indexed_manifest" \
+      | sort -t$'\t' -k2 > "$staged_manifest"
+    manifest_blob=$(git -C "$TARGET_DIR" hash-object -w \
+      --path="$notes_dir/.manifest" "$staged_manifest")
+    git -C "$TARGET_DIR" update-index --add --cacheinfo \
+      100644 "$manifest_blob" "$notes_dir/.manifest"
+  fi
 fi
 
 echo ""

@@ -53,6 +53,18 @@ generate_test_key() {
   [ -f "$TARGET_DIR/.git-crypt/keys/default/0/$fpr.gpg" ]
 }
 
+@test "setup parses variadic configuration before mutation" {
+  local mock_bin="$BATS_TEST_TMPDIR/failing-xargs-bin"
+  make_failing_xargs_overlay "$mock_bin"
+
+  PATH="$mock_bin:$PATH" run notes setup --yes --pattern 'notes/**'
+
+  [ "$status" -eq 73 ]
+  [[ "$output" == *"failed to parse variadic arguments"* ]]
+  [ ! -e "$TARGET_DIR/.git-crypt" ]
+  [ ! -e "$TARGET_DIR/.gitattributes" ]
+}
+
 # --- lock / unlock round-trip ---
 
 @test "lock and unlock round-trip preserves file content" {
@@ -68,12 +80,17 @@ generate_test_key() {
   git -C "$TARGET_DIR" add .
   git -C "$TARGET_DIR" commit -q -m "Add encrypted note"
 
+  local state="$TARGET_DIR/.git/info/notes-obfuscation-state"
+  [ -f "$state" ]
+  awk -F '\t' 'NF >= 4 && $4 != "" { found=1 } END { exit !found }' "$state"
+
   # Lock
   run notes lock --yes
   [ "$status" -eq 0 ]
 
-  # File should not be readable as plaintext
+  # Neither plaintext nor its raw content hashes remain after locking.
   ! grep -q "secret content" "$TARGET_DIR/notes/secret.md" 2>/dev/null
+  [ ! -e "$state" ]
 
   # Unlock
   run notes unlock
@@ -81,6 +98,42 @@ generate_test_key() {
 
   # File should be readable again
   grep -q "secret content" "$TARGET_DIR/notes/secret.md"
+}
+
+@test "lock removes plaintext hashes before invoking rudi" {
+  notes setup --yes
+
+  local fpr
+  fpr=$(generate_test_key "$GNUPGHOME")
+  notes add-user -- --gpg-key "$fpr"
+
+  mkdir -p "$TARGET_DIR/notes"
+  echo "secret content" > "$TARGET_DIR/notes/secret.md"
+  git -C "$TARGET_DIR" add .
+  git -C "$TARGET_DIR" commit -q -m "Add encrypted note"
+
+  local state="$TARGET_DIR/.git/info/notes-obfuscation-state"
+  local fake_bin="$BATS_TEST_TMPDIR/fake-lock-bin"
+  local lock_log="$BATS_TEST_TMPDIR/rudi-lock.log"
+  [ -f "$state" ]
+  mkdir -p "$fake_bin"
+
+  cat > "$fake_bin/rudi" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+[ "${1:-}" = "lock" ] || exit 64
+[ ! -e "${RUDI_STATE_FILE:?RUDI_STATE_FILE not set}" ] || exit 74
+: > "${RUDI_LOCK_LOG:?RUDI_LOCK_LOG not set}"
+exit 73
+SH
+  chmod +x "$fake_bin/rudi"
+  export RUDI_STATE_FILE="$state"
+  export RUDI_LOCK_LOG="$lock_log"
+
+  PATH="$fake_bin:$PATH" run notes lock --yes
+  [ "$status" -eq 73 ]
+  [ -f "$lock_log" ]
+  [ ! -e "$state" ]
 }
 
 @test "unlock no-ops when already unlocked, even with a dirty tree (#42)" {
@@ -498,6 +551,151 @@ run_encryption_hook() {
   [ "$status" -eq 0 ]
 }
 
+@test "encryption hook checks multiple valid staged paths in one git-crypt call (#49)" {
+  notes setup --yes
+  local fpr
+  fpr=$(generate_test_key "$GNUPGHOME")
+  notes add-user -- --gpg-key "$fpr"
+
+  mkdir -p "$TARGET_DIR/notes"
+  printf '%s\n' "first secret" > "$TARGET_DIR/notes/first.md"
+  printf '%s\n' "second secret" > "$TARGET_DIR/notes/second.md"
+  git -C "$TARGET_DIR" add notes/first.md notes/second.md
+
+  local mock_bin="$BATS_TEST_TMPDIR/counting-git-crypt-bin"
+  local calls="$BATS_TEST_TMPDIR/git-crypt-calls"
+  export GIT_CRYPT_CALLS="$calls"
+  mkdir -p "$mock_bin"
+  cat > "$mock_bin/git-crypt" <<'SH'
+#!/usr/bin/env bash
+printf 'call\n' >> "$GIT_CRYPT_CALLS"
+PATH="${PATH#*:}" exec git-crypt "$@"
+SH
+  chmod +x "$mock_bin/git-crypt"
+  export PATH="$mock_bin:$PATH"
+
+  run_encryption_hook
+  [ "$status" -eq 0 ]
+  [ "$(wc -l < "$calls" | tr -d ' ')" -eq 1 ]
+}
+
+@test "encryption hook fails closed when staged-path inspection fails (#49)" {
+  notes setup --yes
+
+  printf '%s\n' "public" > "$TARGET_DIR/public.md"
+  git -C "$TARGET_DIR" add public.md
+
+  local mock_bin="$BATS_TEST_TMPDIR/failing-encryption-diff-bin"
+  local real_git
+  real_git=$(command -v git)
+  mkdir -p "$mock_bin"
+  cat > "$mock_bin/git" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = "diff" ]; then
+  printf '%s\n' "staged inspection failed" >&2
+  exit 73
+fi
+exec "$REAL_GIT" "$@"
+SH
+  chmod +x "$mock_bin/git"
+  export PATH="$mock_bin:$PATH"
+  export REAL_GIT="$real_git"
+
+  run_encryption_hook
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"staged inspection failed"* ]]
+  [[ "$output" == *"Could not inspect staged paths for encryption"* ]]
+}
+
+@test "encryption hook fails closed when staged-attribute inspection fails (#49)" {
+  notes setup --yes
+
+  mkdir -p "$TARGET_DIR/notes"
+  printf '%s\n' "secret" > "$TARGET_DIR/notes/secret.md"
+  git -C "$TARGET_DIR" add notes/secret.md
+
+  local mock_bin="$BATS_TEST_TMPDIR/failing-encryption-attr-bin"
+  local real_git
+  real_git=$(command -v git)
+  mkdir -p "$mock_bin"
+  cat > "$mock_bin/git" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = "check-attr" ]; then
+  printf '%s\n' "attribute inspection failed" >&2
+  exit 74
+fi
+exec "$REAL_GIT" "$@"
+SH
+  chmod +x "$mock_bin/git"
+  export PATH="$mock_bin:$PATH"
+  export REAL_GIT="$real_git"
+
+  run_encryption_hook
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"attribute inspection failed"* ]]
+  [[ "$output" == *"Could not inspect staged encryption attributes"* ]]
+}
+
+
+@test "encryption hook falls back per path after a batched plaintext result (#49)" {
+  notes setup --yes
+  local fpr
+  fpr=$(generate_test_key "$GNUPGHOME")
+  notes add-user -- --gpg-key "$fpr"
+
+  mkdir -p "$TARGET_DIR/notes"
+  local file blob
+  for file in first.md second.md; do
+    blob=$(printf 'PLAINTEXT-LEAK\n' | git -C "$TARGET_DIR" hash-object -w --stdin)
+    git -C "$TARGET_DIR" update-index --add --cacheinfo \
+      100644 "$blob" "notes/$file"
+  done
+
+  local mock_bin="$BATS_TEST_TMPDIR/fallback-git-crypt-bin"
+  local calls="$BATS_TEST_TMPDIR/git-crypt-fallback-calls"
+  export GIT_CRYPT_CALLS="$calls"
+  mkdir -p "$mock_bin"
+  cat > "$mock_bin/git-crypt" <<'SH'
+#!/usr/bin/env bash
+printf 'call\n' >> "$GIT_CRYPT_CALLS"
+PATH="${PATH#*:}" exec git-crypt "$@"
+SH
+  chmod +x "$mock_bin/git-crypt"
+  export PATH="$mock_bin:$PATH"
+
+  run_encryption_hook
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"notes/first.md"* ]]
+  [[ "$output" == *"notes/second.md"* ]]
+  [ "$(wc -l < "$calls" | tr -d ' ')" -eq 3 ]
+}
+
+@test "encryption hook fails closed when git-crypt cannot inspect a staged path (#49)" {
+  notes setup --yes
+  local fpr
+  fpr=$(generate_test_key "$GNUPGHOME")
+  notes add-user -- --gpg-key "$fpr"
+
+  mkdir -p "$TARGET_DIR/notes"
+  echo "secret" > "$TARGET_DIR/notes/ok.md"
+  git -C "$TARGET_DIR" add notes/ok.md
+
+  local mock_bin="$BATS_TEST_TMPDIR/mock-git-crypt-bin"
+  mkdir -p "$mock_bin"
+  cat > "$mock_bin/git-crypt" <<'SH'
+#!/usr/bin/env bash
+echo "backend inspection failed" >&2
+exit 73
+SH
+  chmod +x "$mock_bin/git-crypt"
+  export PATH="$mock_bin:$PATH"
+
+  run_encryption_hook
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"could not inspect staged encrypted path: notes/ok.md"* ]]
+  [[ "$output" == *"backend inspection failed"* ]]
+}
+
 # --- double-tracking pre-commit hook (#51) ---
 run_double_tracking_hook() {
   run bash -c "cd '$TARGET_DIR' && bash .git/hooks/pre-commit.d/verify-double-tracking"
@@ -521,6 +719,31 @@ run_double_tracking_hook() {
 
   run_double_tracking_hook
   [ "$status" -eq 0 ]
+}
+
+@test "double-tracking hook propagates tracked-path inspection failure" {
+  local mock_bin="$BATS_TEST_TMPDIR/failing-double-tracking-git"
+  local real_git
+  real_git=$(command -v git)
+  notes setup --yes
+  mkdir -p "$mock_bin"
+  cat > "$mock_bin/git" <<'SH'
+#!/usr/bin/env bash
+case " $* " in
+  *" ls-files -z -- notes ")
+    echo "tracked-path inspection failed" >&2
+    exit 73
+    ;;
+esac
+exec "$REAL_GIT" "$@"
+SH
+  chmod +x "$mock_bin/git"
+  export REAL_GIT="$real_git"
+
+  PATH="$mock_bin:$PATH" run_double_tracking_hook
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"failed to inspect double-tracked note paths"* ]]
 }
 
 @test "double-tracking hook blocks commit when readable + obfuscated both tracked (#51)" {
