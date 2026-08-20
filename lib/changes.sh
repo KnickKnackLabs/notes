@@ -32,6 +32,35 @@ detect_dual_present_conflicts() {
   done < "$manifest"
 }
 
+# Like detect_dual_present_conflicts, but compare only explicit readable paths.
+# This keeps an unrelated conflict from forcing content reads across the corpus.
+# Usage: detect_selected_dual_present_conflicts <abs_notes_dir> <relpath...>
+detect_selected_dual_present_conflicts() {
+  local abs_notes_dir="${1:?usage: detect_selected_dual_present_conflicts <abs_notes_dir> <relpath...>}"
+  shift
+  local selected=("$@") manifest="$abs_notes_dir/.manifest"
+  [ -f "$manifest" ] || return 0
+
+  local id relpath wanted comparison_status
+  while IFS=$'\t' read -r id relpath; do
+    [ -n "$id" ] || continue
+    wanted=false
+    for candidate in "${selected[@]}"; do
+      [ "$candidate" = "$relpath" ] && wanted=true && break
+    done
+    $wanted || continue
+    [ -f "$abs_notes_dir/$id" ] || continue
+    [ -f "$abs_notes_dir/$relpath" ] || continue
+    comparison_status=0
+    cmp -s "$abs_notes_dir/$id" "$abs_notes_dir/$relpath" || comparison_status=$?
+    case "$comparison_status" in
+      0) ;;
+      1) printf '%s\t%s\n' "$id" "$relpath" ;;
+      *) return "$comparison_status" ;;
+    esac
+  done < "$manifest"
+}
+
 _prepare_change_detection_workspace() {
   local abs_notes_dir="$1" repo_root="$2" notes_dir="$3" workspace="$4"
   local manifest="$abs_notes_dir/.manifest"
@@ -286,6 +315,87 @@ detect_changes() {
   return "$rc"
 }
 
+# Detect changes only for explicit readable paths. Unlike detect_changes, this
+# avoids corpus-wide content hashing while retaining the selected path's HEAD,
+# filter, stale-readable, and deletion checks.
+# Usage: detect_selected_changes <abs_notes_dir> <relpath...>
+detect_selected_changes() {
+  local abs_notes_dir="${1:?usage: detect_selected_changes <abs_notes_dir> <relpath...>}"
+  shift
+  local selected=("$@")
+  local manifest="$abs_notes_dir/.manifest"
+  [ ! -f "$manifest" ] && return 0
+  [ ${#selected[@]} -gt 0 ] || return 0
+
+  resolve_notes_dir "$abs_notes_dir" || return
+  local repo_root="$RESOLVED_REPO_ROOT"
+  local notes_dir="$RESOLVED_NOTES_DIR"
+  require_readable_notes_state "$abs_notes_dir" || return
+
+  local state=""
+  if declare -F _deobfuscation_state_file >/dev/null 2>&1; then
+    state=$(_deobfuscation_state_file "$abs_notes_dir" 2>/dev/null) || state=""
+  fi
+
+  local relpath id head_hash raw_hash state_pair state_tracked state_raw
+  local stale=false
+  for relpath in "${selected[@]}"; do
+    [ -n "$relpath" ] || continue
+    id=$(manifest_id_for_name "$manifest" "$relpath")
+
+    if [ -z "$id" ]; then
+      [ -f "$abs_notes_dir/$relpath" ] || continue
+      stale=false
+      if [ -n "$state" ] && [ -f "$state" ] &&
+        awk -F '\t' -v wanted="$relpath" '$2 == wanted { found = 1 } END { exit !found }' "$state"; then
+        stale=true
+      elif _managed_exclude_readable_relpaths "$abs_notes_dir" | grep -Fxq "$relpath"; then
+        stale=true
+      fi
+      if $stale; then
+        printf 'stale-readable\t%s\n' "$relpath"
+      else
+        printf 'new\t%s\n' "$relpath"
+      fi
+      continue
+    fi
+
+    head_hash=$(printf 'HEAD:%s/%s\n' "$notes_dir" "$id" |
+      git -C "$repo_root" cat-file --batch-check='%(objectname)' 2>/dev/null) || return 1
+    case "$head_hash" in
+      *" missing")
+        [ -f "$abs_notes_dir/$relpath" ] && printf 'new\t%s\n' "$relpath"
+        continue
+        ;;
+    esac
+
+    if [ ! -f "$abs_notes_dir/$relpath" ]; then
+      [ ! -f "$abs_notes_dir/$id" ] && printf 'deleted\t%s\n' "$relpath"
+      continue
+    fi
+
+    state_pair=""
+    if [ -n "$state" ] && [ -f "$state" ]; then
+      state_pair=$(awk -F '\t' -v wanted="$id" '$1 == wanted && NF >= 4 { pair = $3 "|" $4 } END { print pair }' "$state")
+    fi
+    state_tracked="${state_pair%%|*}"
+    state_raw="${state_pair#*|}"
+    raw_hash=$(git -C "$repo_root" hash-object --no-filters -- "$abs_notes_dir/$relpath") || return 1
+
+    if [ -n "$state_raw" ] && [ "$state_tracked" = "$head_hash" ]; then
+      [ "$state_raw" != "$raw_hash" ] && printf 'modified\t%s\n' "$relpath"
+    else
+      local disk_hash
+      disk_hash=$(git -C "$repo_root" hash-object --path="$notes_dir/$id" "$abs_notes_dir/$relpath") || return 1
+      [ "$head_hash" != "$disk_hash" ] && printf 'modified\t%s\n' "$relpath"
+    fi
+  done
+
+  # A clean selected scan is successful; do not leak the final comparison's
+  # false status to callers that distinguish no changes from inspection failure.
+  return 0
+}
+
 # Print ordinary diff output while preserving genuine diff execution failures.
 _emit_notes_diff() {
   local status
@@ -317,7 +427,11 @@ show_diffs() {
   local notes_dir="$RESOLVED_NOTES_DIR"
 
   local changes
-  changes=$(detect_changes "$abs_notes_dir") || return
+  if [ ${#filter_files[@]} -gt 0 ] && [ -n "${filter_files[0]}" ]; then
+    changes=$(detect_selected_changes "$abs_notes_dir" "${filter_files[@]}") || return
+  else
+    changes=$(detect_changes "$abs_notes_dir") || return
+  fi
   [ -z "$changes" ] && return
 
   while IFS=$'\t' read -r status relpath; do

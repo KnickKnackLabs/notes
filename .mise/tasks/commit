@@ -196,7 +196,14 @@ verify_commit_touched_only_notes() {
 
 verify_selected_changes_clean() {
   local remaining bad_selected=() status relpath
-  if remaining=$(detect_changes "$abs_notes_dir"); then
+  if [ "$scope_all" = "true" ]; then
+    if remaining=$(detect_changes "$abs_notes_dir"); then
+      :
+    else
+      echo "Error: failed to verify remaining note changes." >&2
+      return 1
+    fi
+  elif remaining=$(detect_selected_changes "$abs_notes_dir" "${ARGS[@]}"); then
     :
   else
     echo "Error: failed to verify remaining note changes." >&2

@@ -39,9 +39,13 @@ if [ -n "${usage_files:-}" ]; then
 fi
 
 if [ "${usage_summary:-}" = "true" ]; then
-  # Summary mode: just list changes. An unavailable manifest is a clean result.
+  # Summary mode: explicit paths avoid corpus-wide content hashing.
   detect_status=0
-  changes=$(detect_changes "$abs_notes_dir") || detect_status=$?
+  if [ ${#ARGS[@]} -gt 0 ]; then
+    changes=$(detect_selected_changes "$abs_notes_dir" "${ARGS[@]}") || detect_status=$?
+  else
+    changes=$(detect_changes "$abs_notes_dir") || detect_status=$?
+  fi
   if [ "$detect_status" -ne 0 ]; then
     echo "Error: failed to inspect note changes." >&2
     exit "$detect_status"
@@ -90,9 +94,13 @@ if [ "${usage_summary:-}" = "true" ]; then
     echo "$total change(s): $modified modified, $new new, $deleted deleted, $stale stale-readable"
   fi
 else
-  # Diff mode: show full diffs. An unavailable manifest is a clean result.
+  # Diff mode: explicit paths avoid corpus-wide content hashing.
   detect_status=0
-  changes=$(detect_changes "$abs_notes_dir") || detect_status=$?
+  if [ ${#ARGS[@]} -gt 0 ]; then
+    changes=$(detect_selected_changes "$abs_notes_dir" "${ARGS[@]}") || detect_status=$?
+  else
+    changes=$(detect_changes "$abs_notes_dir") || detect_status=$?
+  fi
   if [ "$detect_status" -ne 0 ]; then
     echo "Error: failed to inspect note changes." >&2
     exit "$detect_status"

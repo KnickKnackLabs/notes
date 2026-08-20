@@ -247,6 +247,46 @@ manifest_name_for_id() {
   grep "^${id}"$'\t' "$manifest" | cut -f2
 }
 
+# Detect double-tracking only for explicit readable paths. This retains the
+# selected-path guard without enumerating unrelated tracked notes.
+# Usage: detect_selected_double_tracked_notes <repo_root> <notes_dir_rel> <relpath...>
+detect_selected_double_tracked_notes() {
+  local repo_root="${1:?usage: detect_selected_double_tracked_notes <repo_root> <notes_dir_rel> <relpath...>}"
+  local notes_dir_rel="${2:?usage: detect_selected_double_tracked_notes <repo_root> <notes_dir_rel> <relpath...>}"
+  shift 2
+  local selected=("$@") manifest="$repo_root/$notes_dir_rel/.manifest"
+  [ -f "$manifest" ] || return 0
+  [ ${#selected[@]} -gt 0 ] || return 0
+
+  local workspace snapshot tracked_paths tracked_path
+  workspace=$(mktemp -d) || return 1
+  snapshot="$workspace/snapshot"
+  tracked_paths="$workspace/tracked-paths"
+  if ! git -C "$repo_root" ls-files -z -- "${selected[@]/#/$notes_dir_rel/}" > "$snapshot"; then
+    rm -rf "$workspace"
+    return 1
+  fi
+  while IFS= read -r -d '' tracked_path; do
+    printf '%s\n' "$tracked_path"
+  done < "$snapshot" > "$tracked_paths"
+
+  local id relpath wanted
+  while IFS=$'\t' read -r id relpath; do
+    [ -n "$id" ] || continue
+    wanted=false
+    for candidate in "${selected[@]}"; do
+      [ "$candidate" = "$relpath" ] && wanted=true && break
+    done
+    $wanted || continue
+    if grep -Fxq "$notes_dir_rel/$relpath" "$tracked_paths"; then
+      printf '%s\t%s\n' "$id" "$relpath"
+    fi
+  done < "$manifest"
+  local rc=$?
+  rm -rf "$workspace"
+  return "$rc"
+}
+
 # Detect notes that are tracked both as readable names and as obfuscated IDs.
 # This is the double-tracking bug from notes#51: a readable-named file got
 # committed alongside its obfuscated hex counterpart, causing silent content

@@ -508,6 +508,19 @@ SH
   [[ "$output" == *"No changes."* ]]
 }
 
+@test "notes stage: explicit dry-run hashes only selected legacy notes" {
+  add_clean_numbered_notes 40
+  setup_clean_filter_counter
+  rm -f "$CLEAN_FILTER_CALLS"
+  printf '# Note 10 edited\n' > "$NOTES_CALLER_PWD/notes/note-10.md"
+
+  run notes stage --dry-run note-10.md
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"note-10.md"* ]]
+  [ "$(clean_filter_call_count)" -eq 1 ]
+}
+
 @test "notes stage: path-limited stage does not leak unselected new manifest entry through pre-commit hook" {
   source "$REPO_DIR/lib/hooks.sh"
   install_obfuscation_hook

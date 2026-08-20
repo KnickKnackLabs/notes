@@ -23,7 +23,7 @@ setup_failing_tracked_path_inspection_overlay() {
   cat > "$FAILING_GIT_BIN/git" <<'SH'
 #!/usr/bin/env bash
 case " $* " in
-  *" ls-files -z -- notes ") exit 73 ;;
+  *" ls-files -z "*) exit 73 ;;
 esac
 exec "$REAL_GIT" "$@"
 SH
@@ -194,6 +194,19 @@ SH
   [ ! -e "$NOTES_PROCESS_COUNTER_DIR/basename.calls" ]
 }
 
+@test "notes changes: explicit paths hash only selected legacy notes" {
+  add_clean_numbered_notes 40
+  setup_clean_filter_counter
+  rm -f "$CLEAN_FILTER_CALLS"
+  printf '# Note 10 edited\n' > "$NOTES_CALLER_PWD/notes/note-10.md"
+
+  run notes changes --summary note-10.md
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"modified:  note-10.md"* ]]
+  [ "$(clean_filter_call_count)" -eq 1 ]
+}
+
 @test "detect_changes: trusted raw baselines avoid per-note clean filters" {
   local delete_id state
   add_clean_numbered_notes 40
@@ -316,8 +329,9 @@ SH
   [ -z "$output" ]
 }
 
-@test "working-tree commands propagate change detection failure" {
+@test "full-scope consumers propagate enumeration failure while explicit staging stays bounded" {
   setup_failing_find_overlay
+  printf '# Alpha modified\n' > "$NOTES_CALLER_PWD/notes/alpha.md"
 
   PATH="$FAILING_FIND_BIN:$PATH" run notes changes --summary
   [ "$status" -ne 0 ]
@@ -327,9 +341,9 @@ SH
   [ "$status" -ne 0 ]
   [[ "$output" == *"failed to inspect note changes"* ]]
 
-  PATH="$FAILING_FIND_BIN:$PATH" run notes stage alpha.md
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"failed to inspect note changes"* ]]
+  PATH="$FAILING_FIND_BIN:$PATH" run notes stage --dry-run alpha.md
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"alpha.md"* ]]
 
   PATH="$FAILING_FIND_BIN:$PATH" run notes status --json
   [ "$status" -ne 0 ]
