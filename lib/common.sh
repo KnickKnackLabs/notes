@@ -247,6 +247,57 @@ manifest_name_for_id() {
   grep "^${id}"$'\t' "$manifest" | cut -f2
 }
 
+# Validate explicit readable-note paths before selected-path classifiers inspect
+# the filesystem. Corpus discovery never treats the manifest, obfuscated IDs,
+# or paths reached through symlinks as readable-note candidates.
+# Usage: validate_explicit_readable_note_paths <abs_notes_dir> <manifest> <relpath...>
+validate_explicit_readable_note_paths() {
+  local abs_notes_dir="${1:?usage: validate_explicit_readable_note_paths <abs_notes_dir> <manifest> <relpath...>}"
+  local manifest="${2:?usage: validate_explicit_readable_note_paths <abs_notes_dir> <manifest> <relpath...>}"
+  shift 2
+  local unknown=() components=() relpath component current base
+  require_readable_notes_state "$abs_notes_dir" || return
+
+  for relpath in "$@"; do
+    case "$relpath" in
+      ""|/*|..|../*|*/../*|.|./*|*/./*|*/|.manifest)
+        unknown+=("$relpath")
+        continue
+        ;;
+    esac
+
+    current="$abs_notes_dir"
+    IFS='/' read -r -a components <<< "$relpath"
+    for component in "${components[@]}"; do
+      current="$current/$component"
+      if [ -L "$current" ]; then
+        unknown+=("$relpath")
+        continue 2
+      fi
+    done
+
+    base="${relpath##*/}"
+    if manifest_has_id "$manifest" "$base"; then
+      unknown+=("$relpath")
+      continue
+    fi
+    if [ -f "$abs_notes_dir/$relpath" ] || [ -n "$(manifest_id_for_name "$manifest" "$relpath")" ]; then
+      continue
+    fi
+    unknown+=("$relpath")
+  done
+
+  if [ ${#unknown[@]} -eq 0 ]; then
+    return 0
+  fi
+
+  echo "Error: requested note path(s) are not known readable notes:" >&2
+  for relpath in "${unknown[@]}"; do
+    echo "  $relpath" >&2
+  done
+  return 1
+}
+
 # Detect double-tracking only for explicit readable paths. This retains the
 # selected-path guard without enumerating unrelated tracked notes.
 # Usage: detect_selected_double_tracked_notes <repo_root> <notes_dir_rel> <relpath...>
