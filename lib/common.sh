@@ -247,6 +247,97 @@ manifest_name_for_id() {
   grep "^${id}"$'\t' "$manifest" | cut -f2
 }
 
+# Validate explicit readable-note paths before selected-path classifiers inspect
+# the filesystem. Corpus discovery never treats the manifest, obfuscated IDs,
+# or paths reached through symlinks as readable-note candidates.
+# Usage: validate_explicit_readable_note_paths <abs_notes_dir> <manifest> <relpath...>
+validate_explicit_readable_note_paths() {
+  local abs_notes_dir="${1:?usage: validate_explicit_readable_note_paths <abs_notes_dir> <manifest> <relpath...>}"
+  local manifest="${2:?usage: validate_explicit_readable_note_paths <abs_notes_dir> <manifest> <relpath...>}"
+  shift 2
+  local unknown=() components=() relpath component current base
+  require_readable_notes_state "$abs_notes_dir" || return
+
+  for relpath in "$@"; do
+    case "$relpath" in
+      ""|/*|..|../*|*/../*|.|./*|*/./*|*//*|*/|.manifest)
+        unknown+=("$relpath")
+        continue
+        ;;
+    esac
+
+    current="$abs_notes_dir"
+    IFS='/' read -r -a components <<< "$relpath"
+    for component in "${components[@]}"; do
+      current="$current/$component"
+      if [ -L "$current" ]; then
+        unknown+=("$relpath")
+        continue 2
+      fi
+    done
+
+    base="${relpath##*/}"
+    if manifest_has_id "$manifest" "$base"; then
+      unknown+=("$relpath")
+      continue
+    fi
+    if [ -f "$abs_notes_dir/$relpath" ] || [ -n "$(manifest_id_for_name "$manifest" "$relpath")" ]; then
+      continue
+    fi
+    unknown+=("$relpath")
+  done
+
+  if [ ${#unknown[@]} -eq 0 ]; then
+    return 0
+  fi
+
+  echo "Error: requested note path(s) are not known readable notes:" >&2
+  for relpath in "${unknown[@]}"; do
+    echo "  $relpath" >&2
+  done
+  return 1
+}
+
+# Detect double-tracking only for explicit readable paths. This retains the
+# selected-path guard without enumerating unrelated tracked notes.
+# Usage: detect_selected_double_tracked_notes <repo_root> <notes_dir_rel> <relpath...>
+detect_selected_double_tracked_notes() {
+  local repo_root="${1:?usage: detect_selected_double_tracked_notes <repo_root> <notes_dir_rel> <relpath...>}"
+  local notes_dir_rel="${2:?usage: detect_selected_double_tracked_notes <repo_root> <notes_dir_rel> <relpath...>}"
+  shift 2
+  local selected=("$@") manifest="$repo_root/$notes_dir_rel/.manifest"
+  [ -f "$manifest" ] || return 0
+  [ ${#selected[@]} -gt 0 ] || return 0
+
+  local workspace snapshot tracked_paths tracked_path
+  workspace=$(mktemp -d) || return 1
+  snapshot="$workspace/snapshot"
+  tracked_paths="$workspace/tracked-paths"
+  if ! git -C "$repo_root" ls-files -z -- "${selected[@]/#/$notes_dir_rel/}" > "$snapshot"; then
+    rm -rf "$workspace"
+    return 1
+  fi
+  while IFS= read -r -d '' tracked_path; do
+    printf '%s\n' "$tracked_path"
+  done < "$snapshot" > "$tracked_paths"
+
+  local id relpath wanted
+  while IFS=$'\t' read -r id relpath; do
+    [ -n "$id" ] || continue
+    wanted=false
+    for candidate in "${selected[@]}"; do
+      [ "$candidate" = "$relpath" ] && wanted=true && break
+    done
+    $wanted || continue
+    if grep -Fxq "$notes_dir_rel/$relpath" "$tracked_paths"; then
+      printf '%s\t%s\n' "$id" "$relpath"
+    fi
+  done < "$manifest"
+  local rc=$?
+  rm -rf "$workspace"
+  return "$rc"
+}
+
 # Detect notes that are tracked both as readable names and as obfuscated IDs.
 # This is the double-tracking bug from notes#51: a readable-named file got
 # committed alongside its obfuscated hex counterpart, causing silent content

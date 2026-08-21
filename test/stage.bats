@@ -231,6 +231,28 @@ HOOK
   [ -z "$output" ]
 }
 
+@test "notes stage refuses explicit non-readable paths before selected classification" {
+  local alpha_id
+  alpha_id=$(manifest_id_for_name "$MANIFEST" "alpha.md")
+  printf 'outside\n' > "$NOTES_CALLER_PWD/outside.md"
+  ln -s ../outside.md "$NOTES_CALLER_PWD/notes/linked.md"
+  cp "$NOTES_CALLER_PWD/notes/alpha.md" "$NOTES_CALLER_PWD/notes/$alpha_id"
+  mkdir "$NOTES_CALLER_PWD/notes/sub"
+  printf '# New\n' > "$NOTES_CALLER_PWD/notes/sub/new.md"
+
+  for unsafe_path in .manifest "$alpha_id" linked.md sub//new.md; do
+    run notes stage --dry-run "$unsafe_path"
+
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"requested note path"* ]]
+    [[ "$output" == *"$unsafe_path"* ]]
+    [[ "$output" != *"Would stage:"* ]]
+  done
+
+  run git -C "$NOTES_CALLER_PWD" diff --cached --name-only
+  [ -z "$output" ]
+}
+
 @test "notes stage --dry-run: deleted note leaves manifest and index untouched" {
   local manifest_before
   manifest_before=$(cat "$MANIFEST")
@@ -506,6 +528,19 @@ SH
   run notes changes --summary
   [ "$status" -eq 0 ]
   [[ "$output" == *"No changes."* ]]
+}
+
+@test "notes stage: explicit dry-run hashes only selected legacy notes" {
+  add_clean_numbered_notes 40
+  setup_clean_filter_counter
+  rm -f "$CLEAN_FILTER_CALLS"
+  printf '# Note 10 edited\n' > "$NOTES_CALLER_PWD/notes/note-10.md"
+
+  run notes stage --dry-run note-10.md
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"note-10.md"* ]]
+  [ "$(clean_filter_call_count)" -eq 1 ]
 }
 
 @test "notes stage: path-limited stage does not leak unselected new manifest entry through pre-commit hook" {

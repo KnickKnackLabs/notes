@@ -83,9 +83,8 @@ load changes_test_helper
 
   run notes commit -m "update alpha only" alpha.md
   [ "$status" -eq 0 ]
-  [[ "$output" == *"Remaining note changes"* ]]
-  [[ "$output" == *"modified: beta.md"* ]]
-  [[ "$output" != *"modified: alpha.md"* ]]
+  [[ "$output" == *"Notes changes: clean"* ]]
+  [[ "$output" != *"Remaining note changes"* ]]
 
   git -C "$NOTES_CALLER_PWD" cat-file --filters "HEAD:notes/$alpha_id" | grep -q "Alpha v2"
   git -C "$NOTES_CALLER_PWD" cat-file --filters "HEAD:notes/$beta_id" | grep -q "# Beta"

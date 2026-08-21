@@ -70,35 +70,21 @@ scope_matches() {
   return 1
 }
 
-# Detect changes. An unavailable manifest is a clean result.
+if [ "$scope_all" != "true" ]; then
+  validate_explicit_readable_note_paths "$abs_notes_dir" "$manifest" "${ARGS[@]}" || exit 1
+fi
+
+# Explicit paths classify and hash only selected notes. --all retains complete
+# corpus discovery, including stale-readable detection.
 detect_status=0
-changes=$(detect_changes "$abs_notes_dir") || detect_status=$?
+if [ "$scope_all" = "true" ]; then
+  changes=$(detect_changes "$abs_notes_dir") || detect_status=$?
+else
+  changes=$(detect_selected_changes "$abs_notes_dir" "${ARGS[@]}") || detect_status=$?
+fi
 if [ "$detect_status" -ne 0 ]; then
   echo "Error: failed to inspect note changes." >&2
   exit "$detect_status"
-fi
-
-if [ "$scope_all" != "true" ]; then
-  unknown=()
-  for f in ${ARGS[@]+"${ARGS[@]}"}; do
-    case "$f" in
-      /*|..|../*|*/../*|.|./*|*/./*|*/)
-        unknown+=("$f")
-        continue
-        ;;
-    esac
-    if [ -f "$abs_notes_dir/$f" ] || [ -n "$(manifest_id_for_name "$manifest" "$f")" ]; then
-      continue
-    fi
-    unknown+=("$f")
-  done
-  if [ ${#unknown[@]} -gt 0 ]; then
-    echo "Error: requested note path(s) are not known notes:" >&2
-    for f in ${unknown[@]+"${unknown[@]}"}; do
-      echo "  $f" >&2
-    done
-    exit 1
-  fi
 fi
 
 if [ -z "$changes" ]; then
@@ -127,7 +113,11 @@ fi
 
 conflicting_notes=""
 conflicting_notes_status=0
-conflicting_notes=$(detect_dual_present_conflicts "$abs_notes_dir") || conflicting_notes_status=$?
+if [ "$scope_all" = "true" ]; then
+  conflicting_notes=$(detect_dual_present_conflicts "$abs_notes_dir") || conflicting_notes_status=$?
+else
+  conflicting_notes=$(detect_selected_dual_present_conflicts "$abs_notes_dir" "${ARGS[@]}") || conflicting_notes_status=$?
+fi
 if [ "$conflicting_notes_status" -ne 0 ]; then
   echo "Error: failed to inspect dual-present note paths." >&2
   exit "$conflicting_notes_status"
@@ -159,7 +149,11 @@ fi
 
 double_tracked=""
 double_tracked_status=0
-double_tracked=$(detect_double_tracked_notes "$TARGET_DIR" "$notes_dir") || double_tracked_status=$?
+if [ "$scope_all" = "true" ]; then
+  double_tracked=$(detect_double_tracked_notes "$TARGET_DIR" "$notes_dir") || double_tracked_status=$?
+else
+  double_tracked=$(detect_selected_double_tracked_notes "$TARGET_DIR" "$notes_dir" "${ARGS[@]}") || double_tracked_status=$?
+fi
 if [ "$double_tracked_status" -ne 0 ]; then
   echo "Error: failed to inspect double-tracked note paths." >&2
   exit "$double_tracked_status"
