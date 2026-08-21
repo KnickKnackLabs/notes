@@ -260,7 +260,7 @@ validate_explicit_readable_note_paths() {
 
   for relpath in "$@"; do
     case "$relpath" in
-      ""|/*|..|../*|*/../*|.|./*|*/./*|*/|.manifest)
+      ""|/*|..|../*|*/../*|.|./*|*/./*|*//*|*/|.manifest)
         unknown+=("$relpath")
         continue
         ;;

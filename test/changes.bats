@@ -388,8 +388,10 @@ SH
   alpha_id=$(manifest_id_for_name "$MANIFEST" "alpha.md")
   printf 'outside secret\n' > "$NOTES_CALLER_PWD/outside.md"
   ln -s ../outside.md "$NOTES_CALLER_PWD/notes/linked.md"
+  mkdir "$NOTES_CALLER_PWD/notes/sub"
+  printf '# New\n' > "$NOTES_CALLER_PWD/notes/sub/new.md"
 
-  for unsafe_path in ../outside.md .manifest "$alpha_id" linked.md; do
+  for unsafe_path in ../outside.md .manifest "$alpha_id" linked.md sub//new.md; do
     run notes changes --summary "$unsafe_path"
 
     [ "$status" -ne 0 ]

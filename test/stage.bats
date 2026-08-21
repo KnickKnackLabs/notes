@@ -237,8 +237,10 @@ HOOK
   printf 'outside\n' > "$NOTES_CALLER_PWD/outside.md"
   ln -s ../outside.md "$NOTES_CALLER_PWD/notes/linked.md"
   cp "$NOTES_CALLER_PWD/notes/alpha.md" "$NOTES_CALLER_PWD/notes/$alpha_id"
+  mkdir "$NOTES_CALLER_PWD/notes/sub"
+  printf '# New\n' > "$NOTES_CALLER_PWD/notes/sub/new.md"
 
-  for unsafe_path in .manifest "$alpha_id" linked.md; do
+  for unsafe_path in .manifest "$alpha_id" linked.md sub//new.md; do
     run notes stage --dry-run "$unsafe_path"
 
     [ "$status" -ne 0 ]
