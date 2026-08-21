@@ -71,26 +71,7 @@ scope_matches() {
 }
 
 if [ "$scope_all" != "true" ]; then
-  unknown=()
-  for f in ${ARGS[@]+"${ARGS[@]}"}; do
-    case "$f" in
-      /*|..|../*|*/../*|.|./*|*/./*|*/)
-        unknown+=("$f")
-        continue
-        ;;
-    esac
-    if [ -f "$abs_notes_dir/$f" ] || [ -n "$(manifest_id_for_name "$manifest" "$f")" ]; then
-      continue
-    fi
-    unknown+=("$f")
-  done
-  if [ ${#unknown[@]} -gt 0 ]; then
-    echo "Error: requested note path(s) are not known notes:" >&2
-    for f in ${unknown[@]+"${unknown[@]}"}; do
-      echo "  $f" >&2
-    done
-    exit 1
-  fi
+  validate_explicit_readable_note_paths "$abs_notes_dir" "$manifest" "${ARGS[@]}" || exit 1
 fi
 
 # Explicit paths classify and hash only selected notes. --all retains complete

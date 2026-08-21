@@ -231,6 +231,26 @@ HOOK
   [ -z "$output" ]
 }
 
+@test "notes stage refuses explicit non-readable paths before selected classification" {
+  local alpha_id
+  alpha_id=$(manifest_id_for_name "$MANIFEST" "alpha.md")
+  printf 'outside\n' > "$NOTES_CALLER_PWD/outside.md"
+  ln -s ../outside.md "$NOTES_CALLER_PWD/notes/linked.md"
+  cp "$NOTES_CALLER_PWD/notes/alpha.md" "$NOTES_CALLER_PWD/notes/$alpha_id"
+
+  for unsafe_path in .manifest "$alpha_id" linked.md; do
+    run notes stage --dry-run "$unsafe_path"
+
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"requested note path"* ]]
+    [[ "$output" == *"$unsafe_path"* ]]
+    [[ "$output" != *"Would stage:"* ]]
+  done
+
+  run git -C "$NOTES_CALLER_PWD" diff --cached --name-only
+  [ -z "$output" ]
+}
+
 @test "notes stage --dry-run: deleted note leaves manifest and index untouched" {
   local manifest_before
   manifest_before=$(cat "$MANIFEST")

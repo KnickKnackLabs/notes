@@ -383,6 +383,28 @@ SH
   [[ "$output" == *"failed to inspect dual-present note paths"* ]]
 }
 
+@test "notes changes refuses explicit paths outside the readable note set" {
+  local alpha_id
+  alpha_id=$(manifest_id_for_name "$MANIFEST" "alpha.md")
+  printf 'outside secret\n' > "$NOTES_CALLER_PWD/outside.md"
+  ln -s ../outside.md "$NOTES_CALLER_PWD/notes/linked.md"
+
+  for unsafe_path in ../outside.md .manifest "$alpha_id" linked.md; do
+    run notes changes --summary "$unsafe_path"
+
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"requested note path"* ]]
+    [[ "$output" == *"$unsafe_path"* ]]
+    [[ "$output" != *"new:       $unsafe_path"* ]]
+  done
+
+  run notes changes ../outside.md
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"requested note path"* ]]
+  [[ "$output" != *"outside secret"* ]]
+}
+
 @test "notes changes fails instead of widening an unparsed file scope" {
   local mock_bin="$BATS_TEST_TMPDIR/failing-xargs-bin"
   make_failing_xargs_overlay "$mock_bin"

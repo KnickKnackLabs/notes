@@ -38,6 +38,10 @@ if [ -n "${usage_files:-}" ]; then
   rm -f "$args_snapshot"
 fi
 
+if [ ${#ARGS[@]} -gt 0 ]; then
+  validate_explicit_readable_note_paths "$abs_notes_dir" "$manifest" "${ARGS[@]}" || exit 1
+fi
+
 if [ "${usage_summary:-}" = "true" ]; then
   # Summary mode: explicit paths avoid corpus-wide content hashing.
   detect_status=0
