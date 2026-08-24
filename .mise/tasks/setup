@@ -5,6 +5,7 @@
 #USAGE flag "--pattern <pattern>" var=#true default="" help="Gitattributes patterns to encrypt (default: <dir>/**)"
 #USAGE flag "--dir <dir>" default="notes" help="Notes directory relative to repo root"
 #USAGE flag "--unlock" default=#false help="Unlock after setup (for joining an existing repo)"
+#USAGE example "notes setup --yes" header="Initialize managed encryption without prompting"
 set -euo pipefail
 
 source "$MISE_CONFIG_ROOT/lib/common.sh"
@@ -112,7 +113,7 @@ if [ ${#keys[@]} -gt 0 ]; then
   echo "Adding GPG collaborators..."
 
   skipped=0
-  for key in "${keys[@]}"; do
+  for key in ${keys[@]+"${keys[@]}"}; do
     if gpg --list-keys "$key" &>/dev/null; then
       uid=$(gpg --list-keys --with-colons "$key" 2>/dev/null \
         | awk -F: '/^uid/{print $10; exit}')
@@ -132,7 +133,7 @@ if [ ${#keys[@]} -gt 0 ]; then
 fi
 
 # --- Configure .gitattributes via rudi ---
-configure_setup_encrypted_patterns "$TARGET_DIR" "${patterns[@]}"
+configure_setup_encrypted_patterns "$TARGET_DIR" ${patterns[@]+"${patterns[@]}"}
 
 # --- Bootstrap obfuscation manifest ---
 if [ ! -f "$TARGET_DIR/$NOTES_DIR/.manifest" ]; then

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 #MISE description="Add a GPG collaborator who can decrypt this repo"
 #USAGE flag "--gpg-key <fingerprint>" help="GPG key fingerprint" required=#true
+#USAGE example "notes add-user --gpg-key ABCDEF0123456789" header="Add one collaborator"
 set -euo pipefail
 
 source "$MISE_CONFIG_ROOT/lib/common.sh"

@@ -2,6 +2,7 @@
 #MISE description="Unlock encrypted files using your GPG key"
 #USAGE flag "-y --yes" default=#false help="Skip confirmation prompt"
 #USAGE flag "--force" default=#false help="Overwrite existing readable note files during deobfuscation"
+#USAGE example "notes unlock --yes" header="Unlock and deobfuscate without prompting"
 set -euo pipefail
 
 source "$MISE_CONFIG_ROOT/lib/common.sh"

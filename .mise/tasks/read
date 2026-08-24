@@ -4,6 +4,7 @@
 #USAGE flag "--dir <dir>" help="Notes directory relative to repo root" default="notes"
 #USAGE flag "--json" help="Output parsed frontmatter and body as JSON" default=#false
 #USAGE flag "--with-frontmatter" help="Preserve frontmatter in plain text output" default=#false
+#USAGE example "notes read project-plan --with-frontmatter" header="Read one complete note"
 # /// script
 # dependencies = []
 # ///

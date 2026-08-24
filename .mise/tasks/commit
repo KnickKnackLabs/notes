@@ -5,6 +5,7 @@
 #USAGE flag "--dry-run" default=#false help="Show what would be staged/committed without doing it"
 #USAGE flag "-m --message <message>" default="" help="Commit message"
 #USAGE arg "[files]" var=#true default="" help="Specific notes to commit (readable names, relative to notes dir). Use --all to commit every changed note."
+#USAGE example "notes commit -m 'notes: update plan' notes/plan.md" header="Commit one readable note"
 set -euo pipefail
 
 source "$MISE_CONFIG_ROOT/lib/common.sh"
@@ -203,7 +204,7 @@ verify_selected_changes_clean() {
       echo "Error: failed to verify remaining note changes." >&2
       return 1
     fi
-  elif remaining=$(detect_selected_changes "$abs_notes_dir" "${ARGS[@]}"); then
+  elif remaining=$(detect_selected_changes "$abs_notes_dir" ${ARGS[@]+"${ARGS[@]}"}); then
     :
   else
     echo "Error: failed to verify remaining note changes." >&2
@@ -242,11 +243,11 @@ stage_args=(stage --dir "$notes_dir")
 if [ "$scope_all" = "true" ]; then
   stage_args+=(--all)
 else
-  stage_args+=("${ARGS[@]}")
+  stage_args+=(${ARGS[@]+"${ARGS[@]}"})
 fi
 
 if [ "$dry_run" = "true" ]; then
-  NOTES_CALLER_PWD="$TARGET_DIR" mise run -q "${stage_args[@]}" --dry-run
+  NOTES_CALLER_PWD="$TARGET_DIR" mise run -q ${stage_args[@]+"${stage_args[@]}"} --dry-run
   echo ""
   echo "Would commit with message: $message"
   exit 0
@@ -255,7 +256,7 @@ fi
 require_commit_hooks
 require_no_preexisting_staged_changes
 
-NOTES_CALLER_PWD="$TARGET_DIR" mise run -q "${stage_args[@]}"
+NOTES_CALLER_PWD="$TARGET_DIR" mise run -q ${stage_args[@]+"${stage_args[@]}"}
 
 if [ -z "$(git -C "$TARGET_DIR" diff --cached --name-only)" ]; then
   echo "No selected note changes to commit."

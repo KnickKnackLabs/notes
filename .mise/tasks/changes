@@ -3,6 +3,7 @@
 #USAGE flag "--dir <dir>" default="notes" help="Notes directory relative to repo root"
 #USAGE flag "--summary" default=#false help="Show only the change summary (modified/new/deleted), no diffs"
 #USAGE arg "[files]" var=#true default="" help="Specific notes to check (readable names, relative to notes dir). Omit for all."
+#USAGE example "notes changes --summary" header="Summarize all readable note changes"
 set -euo pipefail
 
 source "$MISE_CONFIG_ROOT/lib/common.sh"
@@ -39,14 +40,14 @@ if [ -n "${usage_files:-}" ]; then
 fi
 
 if [ ${#ARGS[@]} -gt 0 ]; then
-  validate_explicit_readable_note_paths "$abs_notes_dir" "$manifest" "${ARGS[@]}" || exit 1
+  validate_explicit_readable_note_paths "$abs_notes_dir" "$manifest" ${ARGS[@]+"${ARGS[@]}"} || exit 1
 fi
 
 if [ "${usage_summary:-}" = "true" ]; then
   # Summary mode: explicit paths avoid corpus-wide content hashing.
   detect_status=0
   if [ ${#ARGS[@]} -gt 0 ]; then
-    changes=$(detect_selected_changes "$abs_notes_dir" "${ARGS[@]}") || detect_status=$?
+    changes=$(detect_selected_changes "$abs_notes_dir" ${ARGS[@]+"${ARGS[@]}"}) || detect_status=$?
   else
     changes=$(detect_changes "$abs_notes_dir") || detect_status=$?
   fi
@@ -101,7 +102,7 @@ else
   # Diff mode: explicit paths avoid corpus-wide content hashing.
   detect_status=0
   if [ ${#ARGS[@]} -gt 0 ]; then
-    changes=$(detect_selected_changes "$abs_notes_dir" "${ARGS[@]}") || detect_status=$?
+    changes=$(detect_selected_changes "$abs_notes_dir" ${ARGS[@]+"${ARGS[@]}"}) || detect_status=$?
   else
     changes=$(detect_changes "$abs_notes_dir") || detect_status=$?
   fi

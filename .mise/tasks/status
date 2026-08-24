@@ -2,6 +2,7 @@
 #MISE description="Show encryption and obfuscation status"
 #USAGE flag "--json" default=#false help="Output as JSON"
 #USAGE flag "--dir <dir>" default="notes" help="Notes directory name (default: notes)"
+#USAGE example "notes status --json" header="Show managed state as JSON"
 set -euo pipefail
 
 source "$MISE_CONFIG_ROOT/lib/common.sh"

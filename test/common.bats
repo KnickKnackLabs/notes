@@ -53,8 +53,11 @@ tags: []
 ---
 EOF
 
-  unset NOTES_CALLER_PWD
-  run bash -c 'cd "$REPO_DIR" && CALLER_PWD="$1" mise run -q list --json' _ "$stale"
+  export NOTES_CALLER_PWD="$BATS_TEST_TMPDIR/empty-repo"
+  mkdir -p "$NOTES_CALLER_PWD"
+  export CALLER_PWD="$stale"
+  run notes list --json
+  unset CALLER_PWD
 
   [ "$status" -ne 0 ]
   [[ "$output" == *"notes directory not found"* ]]

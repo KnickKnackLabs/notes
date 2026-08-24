@@ -2,6 +2,7 @@
 #MISE description="Parse a note into convention-aware components as JSON"
 #USAGE arg "<note>" help="Note path or slug" required=#true
 #USAGE flag "--dir <dir>" help="Notes directory relative to repo root" default="notes"
+#USAGE example "notes parse project-plan" header="Parse one note as JSON"
 # /// script
 # dependencies = []
 # ///

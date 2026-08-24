@@ -8,6 +8,7 @@
 #USAGE flag "--related <related>" default="" help="Comma-separated related slugs"
 #USAGE flag "--body <body>" default="" help="Body text after frontmatter"
 #USAGE flag "--dir <dir>" default="notes" help="Notes directory relative to repo root"
+#USAGE example "notes new --slug project-plan --title 'Project plan'" header="Create one note"
 set -euo pipefail
 
 REPO_DIR="${MISE_CONFIG_ROOT:?MISE_CONFIG_ROOT not set}"

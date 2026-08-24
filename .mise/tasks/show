@@ -3,6 +3,7 @@
 #USAGE arg "<note>" help="Note slug, title, or path" required=#true
 #USAGE flag "--json" help="Output metadata and body as JSON" default=#false
 #USAGE flag "--dir <dir>" help="Notes directory relative to repo root" default="notes"
+#USAGE example "notes show project-plan --json" header="Show one note as JSON"
 set -euo pipefail
 
 REPO_DIR="${MISE_CONFIG_ROOT:?MISE_CONFIG_ROOT not set}"

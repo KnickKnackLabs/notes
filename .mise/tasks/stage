@@ -4,6 +4,7 @@
 #USAGE flag "--all" default=#false help="Stage all changed notes, including new notes"
 #USAGE flag "--dry-run" default=#false help="Show what would be staged without doing it"
 #USAGE arg "[files]" var=#true default="" help="Specific notes to stage (readable names, relative to notes dir). Use --all to stage every changed note."
+#USAGE example "notes stage --dry-run notes/project-plan.md" header="Preview staging one note"
 set -euo pipefail
 
 source "$MISE_CONFIG_ROOT/lib/common.sh"
@@ -71,7 +72,7 @@ scope_matches() {
 }
 
 if [ "$scope_all" != "true" ]; then
-  validate_explicit_readable_note_paths "$abs_notes_dir" "$manifest" "${ARGS[@]}" || exit 1
+  validate_explicit_readable_note_paths "$abs_notes_dir" "$manifest" ${ARGS[@]+"${ARGS[@]}"} || exit 1
 fi
 
 # Explicit paths classify and hash only selected notes. --all retains complete
@@ -80,7 +81,7 @@ detect_status=0
 if [ "$scope_all" = "true" ]; then
   changes=$(detect_changes "$abs_notes_dir") || detect_status=$?
 else
-  changes=$(detect_selected_changes "$abs_notes_dir" "${ARGS[@]}") || detect_status=$?
+  changes=$(detect_selected_changes "$abs_notes_dir" ${ARGS[@]+"${ARGS[@]}"}) || detect_status=$?
 fi
 if [ "$detect_status" -ne 0 ]; then
   echo "Error: failed to inspect note changes." >&2
@@ -116,7 +117,7 @@ conflicting_notes_status=0
 if [ "$scope_all" = "true" ]; then
   conflicting_notes=$(detect_dual_present_conflicts "$abs_notes_dir") || conflicting_notes_status=$?
 else
-  conflicting_notes=$(detect_selected_dual_present_conflicts "$abs_notes_dir" "${ARGS[@]}") || conflicting_notes_status=$?
+  conflicting_notes=$(detect_selected_dual_present_conflicts "$abs_notes_dir" ${ARGS[@]+"${ARGS[@]}"}) || conflicting_notes_status=$?
 fi
 if [ "$conflicting_notes_status" -ne 0 ]; then
   echo "Error: failed to inspect dual-present note paths." >&2
@@ -133,13 +134,13 @@ if [ -n "$conflicting_notes" ]; then
   if [ ${#blocked_conflicts[@]} -gt 0 ]; then
     echo "Error: incomplete deobfuscation detected; refusing to stage conflicting note(s)." >&2
     echo "A readable note and its obfuscated source both exist with different content:" >&2
-    for conflict in "${blocked_conflicts[@]}"; do
+    for conflict in ${blocked_conflicts[@]+"${blocked_conflicts[@]}"}; do
       IFS=$'\t' read -r conflict_id conflict_relpath <<< "$conflict"
       echo "  $conflict_relpath (also present as $notes_dir/$conflict_id)" >&2
     done
     echo "" >&2
     echo "Run 'notes deobfuscate' after resolving local edits, or inspect with:" >&2
-    for conflict in "${blocked_conflicts[@]}"; do
+    for conflict in ${blocked_conflicts[@]+"${blocked_conflicts[@]}"}; do
       IFS=$'\t' read -r _conflict_id conflict_relpath <<< "$conflict"
       echo "  notes changes $conflict_relpath" >&2
     done
@@ -152,7 +153,7 @@ double_tracked_status=0
 if [ "$scope_all" = "true" ]; then
   double_tracked=$(detect_double_tracked_notes "$TARGET_DIR" "$notes_dir") || double_tracked_status=$?
 else
-  double_tracked=$(detect_selected_double_tracked_notes "$TARGET_DIR" "$notes_dir" "${ARGS[@]}") || double_tracked_status=$?
+  double_tracked=$(detect_selected_double_tracked_notes "$TARGET_DIR" "$notes_dir" ${ARGS[@]+"${ARGS[@]}"}) || double_tracked_status=$?
 fi
 if [ "$double_tracked_status" -ne 0 ]; then
   echo "Error: failed to inspect double-tracked note paths." >&2
@@ -169,7 +170,7 @@ if [ -n "$double_tracked" ]; then
   if [ ${#blocked_tracked[@]} -gt 0 ]; then
     echo "Error: double-tracked notes detected; refusing to stage." >&2
     echo "Readable names are tracked in git alongside their obfuscated IDs (notes#51):" >&2
-    for dt in "${blocked_tracked[@]}"; do
+    for dt in ${blocked_tracked[@]+"${blocked_tracked[@]}"}; do
       IFS=$'\t' read -r dt_id dt_relpath <<< "$dt"
       echo "  $notes_dir/$dt_relpath (also tracked as $notes_dir/$dt_id)" >&2
     done

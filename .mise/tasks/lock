@@ -2,6 +2,7 @@
 #MISE description="Lock encrypted files (re-encrypt on disk)"
 #USAGE flag "-y --yes" default=#false help="Skip confirmation prompt"
 #USAGE flag "-k --key <name>" default="" help="Lock only this named key's files (default: lock all)"
+#USAGE example "notes lock --yes" header="Re-encrypt all managed paths without prompting"
 set -euo pipefail
 
 source "$MISE_CONFIG_ROOT/lib/common.sh"

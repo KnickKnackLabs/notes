@@ -3,6 +3,7 @@
 #USAGE flag "--yes" default=#false help="Skip confirmation for destructive operations"
 #USAGE flag "--dir <dir>" default="notes" help="Notes directory relative to repo root"
 #USAGE flag "--rebase" default=#false help="Use rebase instead of merge (git pull --rebase)"
+#USAGE example "notes pull" header="Pull and reconcile the managed manifest"
 set -euo pipefail
 
 source "$MISE_CONFIG_ROOT/lib/common.sh"

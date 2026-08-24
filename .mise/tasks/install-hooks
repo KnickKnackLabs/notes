@@ -2,6 +2,7 @@
 #MISE description="Install git hooks for obfuscation (pre-commit, post-commit, post-merge)"
 #USAGE flag "-y --yes" default=#false help="Skip confirmation prompt"
 #USAGE flag "--dir <dir>" default="notes" help="Notes directory relative to repo root"
+#USAGE example "notes install-hooks --yes" header="Install hooks without prompting"
 set -euo pipefail
 
 source "$MISE_CONFIG_ROOT/lib/common.sh"

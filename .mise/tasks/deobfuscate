@@ -4,6 +4,7 @@
 #USAGE flag "--dry-run" default=#false help="Show what would be renamed without doing it"
 #USAGE flag "--force" default=#false help="Overwrite existing readable files intentionally"
 #USAGE arg "[files]" var=#true default="" help="Specific obfuscated IDs to deobfuscate. Omit for all."
+#USAGE example "notes deobfuscate --dry-run" header="Preview all readable filename restores"
 set -euo pipefail
 
 source "$MISE_CONFIG_ROOT/lib/common.sh"

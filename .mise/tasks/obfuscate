@@ -3,6 +3,7 @@
 #USAGE flag "--dir <dir>" default="notes" help="Notes directory relative to repo root"
 #USAGE flag "--dry-run" default=#false help="Show what would be renamed without doing it"
 #USAGE arg "[files]" var=#true default="" help="Specific files to obfuscate (relative to notes dir). Omit for all."
+#USAGE example "notes obfuscate --dry-run" header="Preview all filename obfuscation"
 set -euo pipefail
 
 source "$MISE_CONFIG_ROOT/lib/common.sh"
@@ -117,9 +118,9 @@ while IFS=$'\t' read -r relpath id; do
   new_count=$((new_count + 1))
 done < "$renamed"
 
-git -C "$TARGET_DIR" add --sparse -- "${obfuscated_paths[@]}"
+git -C "$TARGET_DIR" add --sparse -- ${obfuscated_paths[@]+"${obfuscated_paths[@]}"}
 git -C "$TARGET_DIR" rm --cached --quiet --ignore-unmatch -- \
-  "${readable_paths[@]}"
+  ${readable_paths[@]+"${readable_paths[@]}"}
 
 # Full mode always owns the complete manifest. Scoped mode stages it only when
 # a renamed mapping is absent from the index, preventing unrelated unstaged

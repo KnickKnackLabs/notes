@@ -3,6 +3,7 @@
 #USAGE flag "--ref <ref>" default="HEAD" help="Git ref to inspect (default: HEAD)"
 #USAGE flag "--dir <dir>" default="notes" help="Notes directory relative to repo root (default: notes)"
 #USAGE flag "--strict" default=#false help="Also fail if working tree has pending note changes"
+#USAGE example "notes verify-blobs --ref HEAD --strict" header="Verify the publishable ref and working state"
 set -euo pipefail
 
 source "$MISE_CONFIG_ROOT/lib/common.sh"
