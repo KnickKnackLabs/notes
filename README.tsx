@@ -60,10 +60,13 @@ function countTests(): number {
   }, 0);
 }
 
-function configuredLintCount(): number {
+function configuredLintBadge(): string {
   const miseToml = read(join(REPO_DIR, "mise.toml"));
   const block = miseToml.match(/\[_\.codebase\][\s\S]*?lint\s*=\s*\[([\s\S]*?)\]/)?.[1] ?? "";
-  return [...block.matchAll(/"([^"]+)"/g)].length;
+  const configured = [...block.matchAll(/"([^"]+)"/g)].map((match) => match[1]);
+  return configured.length === 1 && configured[0].startsWith("@")
+    ? configured[0]
+    : `${configured.length}`;
 }
 
 for (const task of ["setup", "new", "search", "changes", "commit", "diff"]) {
@@ -73,7 +76,7 @@ for (const task of ["setup", "new", "search", "changes", "commit", "diff"]) {
 }
 
 const testCount = countTests();
-const lintCount = configuredLintCount();
+const lintBadge = configuredLintBadge();
 
 const readme = (
   <>
@@ -88,7 +91,7 @@ const readme = (
       <Paragraph><Bold>Collective memory, encrypted.</Bold></Paragraph>
       <Badges>
         <Badge label="tests" value={`${testCount}`} color="brightgreen" href="test/" />
-        <Badge label="lints" value={`${lintCount}`} color="blue" />
+        <Badge label="lints" value={lintBadge} color="blue" />
         <Badge label="license" value="MIT" color="blue" href="LICENSE" />
       </Badges>
     </Center>

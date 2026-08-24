@@ -131,6 +131,7 @@ logged_arguments() {
 
   [ "$status" -eq 0 ]
   [[ "$output" == *"BATS parallelism: serial"* ]]
+  [ "$(arg_count "$bats_log" --no-parallelize-within-files)" -eq 0 ]
   [ "$(arg_count "$bats_log" --parallel-binary-name)" -eq 0 ]
 }
 

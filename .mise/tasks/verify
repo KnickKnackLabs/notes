@@ -2,6 +2,7 @@
 #MISE description="Verify that a public key produces a given fingerprint"
 #USAGE flag "--gpg-key <fingerprint>" help="Expected GPG fingerprint" required=#true
 #USAGE flag "--key-file <file>" default="" help="Path to armored public key file (or - for stdin)"
+#USAGE example "notes verify --gpg-key ABCDEF0123456789 --key-file public.asc" header="Verify one public key"
 set -euo pipefail
 
 source "$MISE_CONFIG_ROOT/lib/common.sh"
@@ -15,4 +16,4 @@ if [ -n "${usage_key_file:-}" ]; then
   args+=(--key-file "$usage_key_file")
 fi
 
-rudi verify "${args[@]}"
+rudi verify ${args[@]+"${args[@]}"}

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 #MISE description="Rebuild status suppression for deobfuscated notes (reapply exclude + assume-unchanged)"
 #USAGE flag "--dir <dir>" default="notes" help="Notes directory relative to repo root"
+#USAGE example "notes suppress-refresh" header="Rebuild readable-note status suppression"
 set -euo pipefail
 
 source "$MISE_CONFIG_ROOT/lib/common.sh"

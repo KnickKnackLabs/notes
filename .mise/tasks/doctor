@@ -63,10 +63,10 @@ else
 fi
 
 if command_available "$gum_command"; then
-  printf '%s\n' "${rows[@]}" |
+  printf '%s\n' ${rows[@]+"${rows[@]}"} |
     "$gum_command" table -s "$separator" -c "CHECK,STATUS,DETAIL" -p --border normal
 else
-  for row in "${rows[@]}"; do
+  for row in ${rows[@]+"${rows[@]}"}; do
     IFS="$separator" read -r name status message <<< "$row"
     printf '%s %s - %s\n' "$status" "$name" "$message"
   done
@@ -74,7 +74,7 @@ fi
 
 if [ ${#details[@]} -gt 0 ]; then
   printf '\n'
-  for detail in "${details[@]}"; do
+  for detail in ${details[@]+"${details[@]}"}; do
     printf '%s\n' "$detail"
   done
 fi

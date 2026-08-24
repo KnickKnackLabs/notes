@@ -3,6 +3,7 @@
 #USAGE flag "--dry-run" default=#false help="Preview conflict artifacts without resolving or staging"
 #USAGE flag "--dir <dir>" default="notes" help="Notes directory relative to repo root (default: notes)"
 #USAGE flag "--out <dir>" default="" help="Output directory for readable conflict artifacts"
+#USAGE example "notes merge --dry-run --out /tmp/notes-merge" header="Preview readable merge artifacts"
 set -euo pipefail
 
 source "$MISE_CONFIG_ROOT/lib/common.sh"
@@ -20,4 +21,4 @@ if [ -n "${usage_out:-}" ]; then
   args+=(--out "${usage_out}")
 fi
 
-cd "$MISE_CONFIG_ROOT" && NOTES_CALLER_PWD="$TARGET_DIR" mise run -q "${args[@]}"
+cd "$MISE_CONFIG_ROOT" && NOTES_CALLER_PWD="$TARGET_DIR" mise run -q ${args[@]+"${args[@]}"}

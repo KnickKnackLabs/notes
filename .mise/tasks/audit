@@ -3,6 +3,7 @@
 #USAGE flag "--dir <dir>" default="notes" help="Notes directory relative to repo root"
 #USAGE flag "--top <n>" default="10" help="How many notes to show in top-N lists"
 #USAGE flag "--json" default=#false help="Emit full per-note counts as JSON instead of the human-readable summary"
+#USAGE example "notes audit --top 20" header="Show the 20 busiest graph entries"
 # /// script
 # dependencies = []
 # ///

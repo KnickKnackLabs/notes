@@ -4,6 +4,7 @@
 #USAGE flag "--pr <number>" default="" help="Diff a GitHub PR from the current repo's origin remote"
 #USAGE flag "--out <dir>" default="" help="Write changed-note base/head artifacts and readable.patch to this directory"
 #USAGE arg "[refs]" var=#true default="" help="Optional ref/range: BASE HEAD, BASE..HEAD, or BASE...HEAD. Omit for working-tree diff against HEAD."
+#USAGE example "notes diff HEAD~1..HEAD" header="Show the latest readable note diff"
 set -euo pipefail
 
 source "$MISE_CONFIG_ROOT/lib/common.sh"

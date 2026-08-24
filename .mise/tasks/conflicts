@@ -2,6 +2,7 @@
 #MISE description="Write readable artifacts for unresolved note content conflicts"
 #USAGE flag "--dir <dir>" default="notes" help="Notes directory relative to repo root (default: notes)"
 #USAGE flag "--out <dir>" default="" help="Output directory for readable conflict artifacts"
+#USAGE example "notes conflicts --out /tmp/notes-conflicts" header="Write readable conflict artifacts"
 set -euo pipefail
 
 source "$MISE_CONFIG_ROOT/lib/common.sh"

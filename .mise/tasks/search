@@ -7,6 +7,7 @@
 #USAGE flag "--status <status>" help="Filter by frontmatter status" default=""
 #USAGE flag "--limit <n>" help="Maximum results to show" default="50"
 #USAGE flag "--dir <dir>" help="Notes directory relative to repo root" default="notes"
+#USAGE example "notes search 'project plan' --limit 10" header="Search note content"
 set -euo pipefail
 
 REPO_DIR="${MISE_CONFIG_ROOT:?MISE_CONFIG_ROOT not set}"

@@ -6,6 +6,7 @@
 #USAGE flag "--type <type>" help="Filter by frontmatter type" default=""
 #USAGE flag "--status <status>" help="Filter by frontmatter status" default=""
 #USAGE flag "--dir <dir>" help="Notes directory relative to repo root" default="notes"
+#USAGE example "notes list --json --recent 5" header="List five recent notes as JSON"
 set -euo pipefail
 
 REPO_DIR="${MISE_CONFIG_ROOT:?MISE_CONFIG_ROOT not set}"

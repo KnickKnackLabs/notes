@@ -14,7 +14,6 @@ notes/
 ├── assets/            # Public README artwork
 ├── hooks/             # Installed Git hook components and templates
 ├── lib/               # Shared Bash and Python domain logic
-├── libexec/test       # Canonical mixed BATS/Python test workflow
 ├── test/              # BATS behavior and integration tests
 ├── test/python/       # Focused Python tests
 ├── mise.toml          # Tools, settings, and convention lint configuration
@@ -62,16 +61,17 @@ mise run test test/python/test_audit.py
 mise run test --jobs 1              # serial BATS debugging
 ```
 
-The public test task only translates Usage arguments. `libexec/test` owns target
-classification and execution, while `test/setup_suite.bash` establishes the
-repo-local tool environment and deterministic fixture Git identity once per
-BATS invocation.
+The public test task owns Usage translation, target classification, and the
+complete mixed-suite runner. `test/setup_suite.bash` establishes the repo-local
+tool environment and deterministic fixture Git identity once per BATS
+invocation.
 
-Notes uses eight BATS workers across test files. BATS does not parallelize the
-tests within one file, so split large suites along coherent fixture and behavior
-boundaries when that exposes useful independent work. Keep mutable fixtures
-under `$BATS_TEST_TMPDIR`; do not introduce shared test repositories, fixed
-temporary paths, or ambient signing dependencies.
+Notes uses eight BATS workers across test files. The runner passes
+`--no-parallelize-within-files`: mutable paths and repositories remain isolated
+under each test's `$BATS_TEST_TMPDIR`, but tests within one file stay serial.
+Split large suites along coherent fixture and behavior boundaries when that
+exposes useful independent work. Do not introduce shared test repositories,
+fixed temporary paths, live services, or ambient signing dependencies.
 
 ## Encryption and Git safety
 
