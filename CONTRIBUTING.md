@@ -55,20 +55,22 @@ tools, and the package-scoped `NOTES_CALLER_PWD` contract.
 
 ```bash
 mise run test                       # BATS and Python suites
-mise run test changes               # test/changes.bats and matching Python test, if present
+mise run test test/changes.bats     # run one BATS test file
 mise run test --filter suppression  # filter BATS test names
 mise run test test/python/test_audit.py
 mise run test --jobs 1              # serial BATS debugging
 ```
 
-The public test task owns Usage translation, target classification, and the
-complete mixed-suite runner. `test/setup_suite.bash` establishes the repo-local
-tool environment and deterministic fixture Git identity once per BATS
-invocation.
+BATS owns option parsing, default-target selection, target expansion, and
+parallel-runner validation. The public test task runs both BATS and Python when
+called without arguments, routes an explicit Python test path to pytest, and
+otherwise forwards every argument unchanged to BATS. `test/setup_suite.bash`
+establishes the repo-local tool environment and deterministic fixture Git
+identity once per BATS invocation.
 
-Notes uses eight BATS workers across test files. The runner passes
-`--no-parallelize-within-files`: mutable paths and repositories remain isolated
-under each test's `$BATS_TEST_TMPDIR`, but tests within one file stay serial.
+Notes uses eight BATS workers across test files. The runner sets BATS's native
+per-file guard so mutable paths and repositories remain isolated under each
+test's `$BATS_TEST_TMPDIR`, while tests within one file stay serial.
 Split large suites along coherent fixture and behavior boundaries when that
 exposes useful independent work. Do not introduce shared test repositories,
 fixed temporary paths, live services, or ambient signing dependencies.
