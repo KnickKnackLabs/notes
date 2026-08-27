@@ -5,155 +5,142 @@ bats_require_minimum_version 1.5.0
 
 setup() {
   export NOTES_CALLER_PWD="$BATS_TEST_TMPDIR"
-  mock_dir="$BATS_TEST_TMPDIR/mock-bin"
-  bats_log="$BATS_TEST_TMPDIR/bats.log"
-  uv_log="$BATS_TEST_TMPDIR/uv.log"
-  mkdir -p "$mock_dir"
-  export bats_log uv_log
-
-  cat > "$mock_dir/bats" <<'SH'
-#!/usr/bin/env bash
-set -euo pipefail
-for argument in "$@"; do
-  printf 'arg=%s\n' "$argument"
-done > "$bats_log"
-SH
-
-  cat > "$mock_dir/uv" <<'SH'
-#!/usr/bin/env bash
-set -euo pipefail
-for argument in "$@"; do
-  printf 'arg=%s\n' "$argument"
-done > "$uv_log"
-SH
-
-  cat > "$mock_dir/rush" <<'SH'
-#!/usr/bin/env bash
-exit 0
-SH
-
-  chmod +x "$mock_dir/bats" "$mock_dir/uv" "$mock_dir/rush"
-  export BATS_COMMAND="$mock_dir/bats"
-  export UV_COMMAND="$mock_dir/uv"
-  export RUSH_COMMAND="$mock_dir/rush"
-  unset BATS_NUMBER_OF_PARALLEL_JOBS BATS_PARALLEL_BINARY_NAME
 }
 
-arg_count() {
-  local log="$1"
-  local expected="$2"
-  awk -F= -v expected="$expected" \
-    '$1 == "arg" && substr($0, 5) == expected { count++ } END { print count + 0 }' \
-    "$log"
+write_passing_test() {
+  local path="$1" name="$2"
+  mkdir -p "$(dirname "$path")"
+  local test_keyword='@test'
+  printf '%s\n' \
+    '#!/usr/bin/env bats' \
+    "$test_keyword \"$name\" {" \
+    '  true' \
+    '}' > "$path"
 }
 
-logged_arguments() {
-  sed -n 's/^arg=//p' "$1"
-}
-
-@test "test task preserves Notes' eight-worker across-file default" {
-  run notes test changes
+@test "options-only calls use the configured Notes test directory" {
+  run notes test --jobs 1 --filter '^hosted validation covers Linux and macOS$'
 
   [ "$status" -eq 0 ]
-  [[ "$output" == *"8 jobs across files"* ]]
-  [ "$(arg_count "$bats_log" --jobs)" -eq 1 ]
-  [ "$(arg_count "$bats_log" 8)" -eq 1 ]
-  [ "$(arg_count "$bats_log" --parallel-binary-name)" -eq 1 ]
-  [ "$(arg_count "$bats_log" "$mock_dir/rush")" -eq 1 ]
-  [ "$(arg_count "$bats_log" --no-parallelize-within-files)" -eq 1 ]
-  [ "$(arg_count "$bats_log" "$REPO_DIR/test/changes.bats")" -eq 1 ]
-  [ ! -e "$uv_log" ]
+  [[ "$output" == *'1..1'* ]]
+  [[ "$output" == *'ok 1 hosted validation covers Linux and macOS'* ]]
+}
+
+@test "an explicit BATS target takes precedence over the configured default" {
+  local target="$BATS_TEST_TMPDIR/explicit.bats"
+  write_passing_test "$target" 'explicit target only'
+
+  run notes test --jobs 1 "$target"
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'1..1'* ]]
+  [[ "$output" == *'ok 1 explicit target only'* ]]
+}
+
+@test "relative BATS targets resolve from the repository root" {
+  run notes test --jobs 1 test/ci.bats \
+    --filter '^hosted validation covers Linux and macOS$'
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'1..1'* ]]
+  [[ "$output" == *'ok 1 hosted validation covers Linux and macOS'* ]]
+}
+
+@test "whitespace-bearing explicit BATS targets remain one argument" {
+  local target="$BATS_TEST_TMPDIR/explicit target/passing test.bats"
+  write_passing_test "$target" 'whitespace target'
+
+  run notes test --jobs 2 "$target"
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'1..1'* ]]
+  [[ "$output" == *'ok 1 whitespace target'* ]]
 }
 
 @test "default test task runs the complete BATS and Python suites" {
-  run notes test
+  local mock_dir="$BATS_TEST_TMPDIR/mock-bin"
+  local bats_log="$BATS_TEST_TMPDIR/bats.log"
+  local uv_log="$BATS_TEST_TMPDIR/uv.log"
+  mkdir -p "$mock_dir"
+
+  cat > "$mock_dir/bats" <<'SH'
+#!/usr/bin/env bash
+printf 'target=%s\n' "$BATS_DEFAULT_TEST_TARGET"
+printf 'within=%s\n' "$BATS_NO_PARALLELIZE_WITHIN_FILE"
+printf 'arg=%s\n' "$@"
+SH
+  cat > "$mock_dir/uv" <<'SH'
+#!/usr/bin/env bash
+printf 'arg=%s\n' "$@"
+SH
+  chmod +x "$mock_dir/bats" "$mock_dir/uv"
+
+  BATS_COMMAND="$mock_dir/bats" UV_COMMAND="$mock_dir/uv" \
+    run notes test
 
   [ "$status" -eq 0 ]
-  [ "$(arg_count "$bats_log" "$REPO_DIR/test/")" -eq 1 ]
-  [ "$(logged_arguments "$uv_log")" = "$(printf '%s\n' \
-    run --with pytest pytest "$REPO_DIR/test/python")" ]
+  [[ "$output" == *"target=$REPO_DIR/test"* ]]
+  [[ "$output" == *'within=true'* ]]
+  [[ "$output" == *"arg=$REPO_DIR/test/python"* ]]
 }
 
-@test "bare suite name runs matching BATS and Python tests" {
-  run notes test audit
-
-  [ "$status" -eq 0 ]
-  [ "$(arg_count "$bats_log" "$REPO_DIR/test/audit.bats")" -eq 1 ]
-  [ "$(arg_count "$uv_log" "$REPO_DIR/test/python/test_audit.py")" -eq 1 ]
-}
-
-@test "explicit Python target does not start BATS" {
+@test "an explicit Python target runs only pytest" {
   run notes test test/python/test_audit.py
 
   [ "$status" -eq 0 ]
-  [ ! -e "$bats_log" ]
-  [ "$(arg_count "$uv_log" test/python/test_audit.py)" -eq 1 ]
+  [[ "$output" == *'9 passed'* ]]
 }
 
-@test "Python-only runs ignore irrelevant BATS parallelism state" {
-  export BATS_NUMBER_OF_PARALLEL_JOBS=invalid
-  export RUSH_COMMAND="$mock_dir/missing-rush"
+@test "public Notes test path runs separate BATS files concurrently" {
+  local probe_dir="$BATS_TEST_TMPDIR/across-file-probe"
+  export PROBE_DIR="$BATS_TEST_TMPDIR/across-file-barrier"
+  mkdir -p "$probe_dir" "$PROBE_DIR"
+  local test_keyword='@test'
 
-  run notes test test/python/test_audit.py
+  for side in one two; do
+    other=one
+    [ "$side" = one ] && other=two
+    cat > "$probe_dir/$side.bats" <<BATS
+#!/usr/bin/env bats
+$test_keyword "$side worker observes $other worker" {
+  touch "\$PROBE_DIR/$side"
+  for _ in {1..50}; do
+    [ ! -e "\$PROBE_DIR/$other" ] || return 0
+    sleep 0.05
+  done
+  false
+}
+BATS
+  done
+
+  run notes test "$probe_dir"
 
   [ "$status" -eq 0 ]
-  [ ! -e "$bats_log" ]
-  [ "$(arg_count "$uv_log" test/python/test_audit.py)" -eq 1 ]
 }
 
-@test "BATS option values that look like Python paths stay BATS option values" {
-  run notes test --filter test/python/test_audit.py
+@test "public Notes test path keeps tests within one BATS file serial" {
+  local target="$BATS_TEST_TMPDIR/within-file.bats"
+  export PROBE_DIR="$BATS_TEST_TMPDIR/within-file-barrier"
+  mkdir -p "$PROBE_DIR"
+  local test_keyword='@test'
+
+  cat > "$target" <<BATS
+#!/usr/bin/env bats
+$test_keyword "first test runs alone" {
+  touch "\$PROBE_DIR/one"
+  sleep 0.2
+  [ ! -e "\$PROBE_DIR/two" ]
+  rm "\$PROBE_DIR/one"
+}
+$test_keyword "second test runs alone" {
+  touch "\$PROBE_DIR/two"
+  sleep 0.2
+  [ ! -e "\$PROBE_DIR/one" ]
+  rm "\$PROBE_DIR/two"
+}
+BATS
+
+  run notes test "$target"
 
   [ "$status" -eq 0 ]
-  [ "$(logged_arguments "$bats_log")" = "$(printf '%s\n' \
-    --jobs 8 \
-    --no-parallelize-within-files \
-    --parallel-binary-name "$mock_dir/rush" \
-    --filter test/python/test_audit.py \
-    "$REPO_DIR/test/")" ]
-  [ ! -e "$uv_log" ]
-}
-
-@test "explicit jobs override is forwarded once" {
-  run notes test --jobs 3 changes
-
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"3 jobs across files"* ]]
-  [ "$(arg_count "$bats_log" --jobs)" -eq 1 ]
-  [ "$(arg_count "$bats_log" 3)" -eq 1 ]
-  [ "$(arg_count "$bats_log" 8)" -eq 0 ]
-}
-
-@test "serial override does not require Rush" {
-  export RUSH_COMMAND="$mock_dir/missing-rush"
-
-  run notes test --jobs 1 changes
-
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"BATS parallelism: serial"* ]]
-  [ "$(arg_count "$bats_log" --no-parallelize-within-files)" -eq 0 ]
-  [ "$(arg_count "$bats_log" --parallel-binary-name)" -eq 0 ]
-}
-
-@test "missing selected BATS executable fails before running either suite" {
-  export BATS_COMMAND="$mock_dir/missing-bats"
-
-  run -127 notes test
-
-  [ "$status" -eq 127 ]
-  [[ "$output" == *"BATS executable '$mock_dir/missing-bats' is unavailable"* ]]
-  [ ! -e "$bats_log" ]
-  [ ! -e "$uv_log" ]
-}
-
-@test "test task propagates variadic parser failure" {
-  local failing_xargs_bin="$BATS_TEST_TMPDIR/failing-xargs-bin"
-  make_failing_xargs_overlay "$failing_xargs_bin"
-
-  PATH="$failing_xargs_bin:$PATH" run notes test changes
-
-  [ "$status" -eq 73 ]
-  [[ "$output" == *"failed to parse variadic arguments"* ]]
-  [ ! -e "$bats_log" ]
-  [ ! -e "$uv_log" ]
 }

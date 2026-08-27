@@ -246,9 +246,9 @@ SH
   [[ "$output" == *"failed to parse variadic arguments"* ]]
 }
 
-@test "variadic task arguments use the checked shared parser" {
+@test "Notes-owned variadic task arguments use the checked shared parser" {
   local task
-  for task in changes commit deobfuscate diff obfuscate setup stage test; do
+  for task in changes commit deobfuscate diff obfuscate setup stage; do
     grep -q 'parse_variadic_args' "$REPO_DIR/.mise/tasks/$task"
     ! grep -Eq 'done < <\(.*xargs' "$REPO_DIR/.mise/tasks/$task"
   done

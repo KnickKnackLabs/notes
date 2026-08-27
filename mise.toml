@@ -8,7 +8,7 @@ aqua.registries = ["https://github.com/KnickKnackLabs/bats-core"]
 shiv = "https://github.com/KnickKnackLabs/vfox-shiv"
 
 [tools]
-"aqua:KnickKnackLabs/bats-core" = "1.14.0-kkl.1"
+"aqua:KnickKnackLabs/bats-core" = "1.14.0-kkl.3"
 gum = "0.17.0"
 uv = "0.11.19"
 "aqua:shenwei356/rush" = "0.9.0"
